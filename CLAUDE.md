@@ -10,7 +10,6 @@ Arnés de desarrollo y mantenimiento de **YouTube DJ Analytics** — pipeline me
 4. **Idempotencia en Silver, incrementalidad en Gold.** Silver usa `MERGE` sobre clave natural (reprocesar = 0 filas nuevas). Gold nunca reprocesa comentarios ya clasificados/embebidos (`LEFT JOIN ... WHERE IS NULL`), por control de costo de Vertex AI.
 5. **Ningún registro se descarta sin rastro.** Todo lo que falla validación Pydantic o integridad referencial va a `silver_dead_letter_queue`, nunca se pierde silenciosamente.
 6. **Co-ubicación regional obligatoria:** BigQuery, Vertex AI y Cloud Run Jobs en `us-central1` — `ML.GENERATE_TEXT`/`ML.GENERATE_EMBEDDING` fallan si hay mismatch de región.
-7. **Esta sesión de arnés no ejecuta nada real.** Los skills son guías para trabajo futuro; no implican que la infraestructura ya exista o deba crearse por default.
 
 ## Qué skill usar
 

@@ -12,7 +12,6 @@ Este documento es deliberadamente **lean**: invariantes del sistema + tabla de q
 4. **Idempotencia en Silver, incrementalidad en Gold.** Silver usa `MERGE` sobre clave natural. Gold nunca reprocesa comentarios ya clasificados/embebidos, por control de costo de Vertex AI.
 5. **Ningún registro se descarta sin rastro.** Todo lo que falla validación va a `silver_dead_letter_queue`.
 6. **Co-ubicación regional obligatoria:** BigQuery, Vertex AI y Cloud Run Jobs en `us-central1`.
-7. **Esta versión del arnés no ejecuta nada real.** Los skills son guías para trabajo futuro.
 
 ## Comandos de referencia (una vez implementado el pipeline)
 
