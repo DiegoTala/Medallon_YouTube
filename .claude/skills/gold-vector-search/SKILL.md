@@ -21,12 +21,16 @@ OPTIONS(distance_type='COSINE', index_type='IVF');
 
 ## Búsqueda semántica por similitud de coseno
 
+`gold_youtube_embeddings` solo tiene `(comment_id, text_embedding)` — nunca
+`comment_text` (ver invariantes de [[gold-embeddings-generation]], que tampoco
+lo inserta). Para devolver el texto del comentario similar, se hace `JOIN`
+contra `silver_youtube_comments`, la única fuente de verdad de ese texto, en
+vez de duplicarlo en la tabla de embeddings:
+
 ```sql
 SELECT
-  base.comment_id AS query_comment_id,
-  base.comment_text AS query_text,
   candidate.comment_id AS similar_comment_id,
-  candidate.comment_text AS similar_text,
+  silver.comment_text AS similar_text,
   distance
 FROM
   VECTOR_SEARCH(
@@ -39,27 +43,44 @@ FROM
     ),
     top_k => 10,
     distance_type => 'COSINE'
-  );
+  )
+JOIN `proyecto.dataset.silver_youtube_comments` AS silver
+  ON candidate.comment_id = silver.comment_id;
 ```
+
+> **Decisión (2026-08-02):** se evaluó agregar `comment_text` como columna
+> duplicada en `gold_youtube_embeddings` (evita el JOIN) contra hacer el JOIN
+> en cada búsqueda. Se eligió el JOIN: evita desincronización de texto entre
+> tablas y el costo incremental de bytes escaneados es despreciable al volumen
+> del proyecto (~2,500 comentarios/mes). Ver [[cost-guardrail]] si el volumen
+> crece lo suficiente para reconsiderarlo.
 
 ## Snippet de ejemplo (parametrizar desde Python con el cliente de BigQuery)
 
 ```python
 from google.cloud import bigquery
 
-def semantic_search(client: bigquery.Client, query_comment_id: str, top_k: int = 10):
-    query = """
+def semantic_search(
+    client: bigquery.Client,
+    embeddings_table: str,
+    silver_comments_table: str,
+    query_comment_id: str,
+    top_k: int = 10,
+):
+    query = f"""
         SELECT candidate.comment_id AS similar_comment_id,
-               candidate.comment_text AS similar_text,
+               silver.comment_text AS similar_text,
                distance
         FROM VECTOR_SEARCH(
-            TABLE `proyecto.dataset.gold_youtube_embeddings`,
+            TABLE `{embeddings_table}`,
             'text_embedding',
-            (SELECT text_embedding FROM `proyecto.dataset.gold_youtube_embeddings`
+            (SELECT text_embedding FROM `{embeddings_table}`
              WHERE comment_id = @query_comment_id),
             top_k => @top_k,
             distance_type => 'COSINE'
         )
+        JOIN `{silver_comments_table}` AS silver
+          ON candidate.comment_id = silver.comment_id
     """
     job_config = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("query_comment_id", "STRING", query_comment_id),
@@ -73,8 +94,10 @@ def semantic_search(client: bigquery.Client, query_comment_id: str, top_k: int =
 - **No recrear el índice en cada corrida del batch** — solo `CREATE VECTOR INDEX IF NOT EXISTS`.
 - **`top_k` acotado:** no exponer búsquedas con `top_k` sin límite superior razonable (ej. máx. 50) para evitar consultas costosas si esto se conecta a un endpoint público en el futuro.
 - **La columna indexada (`text_embedding`) debe coincidir en dimensionalidad** con lo que produce el modelo activo en [[gold-embeddings-generation]].
+- **`comment_text` nunca se duplica en `gold_youtube_embeddings`:** toda búsqueda semántica que necesite el texto lo trae vía `JOIN` a `silver_youtube_comments`, nunca agregando la columna a la tabla de embeddings (ver decisión 2026-08-02 arriba).
 
 ## Relación con otros skills
 
 - Depende directamente de la tabla que produce [[gold-embeddings-generation]].
+- El `JOIN` de `semantic_search` depende también de `silver_youtube_comments`, la tabla que produce [[silver-validation-comments]] — es la única fuente de verdad del texto del comentario.
 - Cambios en el índice (tipo de distancia, tipo de índice) son cambios de infraestructura de datos y deben cotizarse con [[cost-guardrail]] y aprobarse vía [[approval-gate]] si implican recreación completa.

@@ -19,7 +19,7 @@ Comment ID, Video ID padre, Autor, Conteo de likes, Fecha de publicación, Texto
 2. Por cada video: `commentThreads.list` con `part=snippet,replies`, `maxResults=100`, paginando con `nextPageToken` hasta agotar o alcanzar el tope de la matriz de riesgos del PRD.
 3. Si `commentThreads.list` marca el video con comentarios deshabilitados (error 403 `commentsDisabled`), se registra el video como "sin comentarios" y se continúa — no se detiene el batch completo.
 4. Cada comment thread crudo (incluye sus replies anidadas) se serializa como una línea JSON.
-5. Escribir a `gs://bucket-yt-bronze/raw/anio=YYYY/mes=MM/dia=DD/comments_batch_data.json`.
+5. Escribir a `gs://bucket-yt-bronze/raw/anio=YYYY/mes=MM/dia=DD/comments_batch_data_<batch_execution_id>.json`. El sufijo `<batch_execution_id>` es obligatorio por la misma razón que en [[bronze-ingestion-videos]]: sin él, una segunda corrida el mismo día sobreescribiría el archivo del batch anterior (corregido 2026-08-02).
 
 ## Snippet de ejemplo (Python)
 
@@ -50,10 +50,10 @@ def fetch_comment_threads(youtube, video_id: str) -> list[dict]:
     return threads
 
 
-def write_bronze_comments_jsonl(all_threads: dict[str, list[dict]], bucket, batch_date) -> str:
+def write_bronze_comments_jsonl(all_threads: dict[str, list[dict]], bucket, batch_date, batch_execution_id: str) -> str:
     path = (
         f"raw/anio={batch_date:%Y}/mes={batch_date:%m}/dia={batch_date:%d}"
-        "/comments_batch_data.json"
+        f"/comments_batch_data_{batch_execution_id}.json"
     )
     lines = [
         json.dumps({"video_id": video_id, "thread": thread}, ensure_ascii=False)
@@ -67,7 +67,7 @@ def write_bronze_comments_jsonl(all_threads: dict[str, list[dict]], bucket, batc
 
 ## Invariantes
 
-- **Inmutable**, igual que bronze-ingestion-videos.
+- **Inmutable**, igual que bronze-ingestion-videos: el nombre del archivo incluye `batch_execution_id`, nunca solo la partición por fecha.
 - **Dependencia de orden:** solo se ingieren comentarios de videos que ya pasaron por bronze-ingestion-videos en el mismo `batch_execution_id` — no se procesan videos "sueltos".
 - **Comentarios deshabilitados no son error:** se documenta y se sigue; no se reintenta ni se manda a dead-letter (no es un fallo de validación, es un estado válido del video).
 

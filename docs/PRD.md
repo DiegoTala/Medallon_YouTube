@@ -214,10 +214,8 @@ OPTIONS(distance_type='COSINE', index_type='IVF');
 
 -- 4. Ejemplo de Búsqueda Semántica por Similitud de Coseno
 SELECT
-  base.comment_id AS query_comment_id,
-  base.comment_text AS query_text,
   candidate.comment_id AS similar_comment_id,
-  candidate.comment_text AS similar_text,
+  silver.comment_text AS similar_text,
   distance
 FROM
   VECTOR_SEARCH(
@@ -230,10 +228,14 @@ FROM
     ),
     top_k => 10,
     distance_type => 'COSINE'
-  );
+  )
+JOIN `proyecto.dataset.silver_youtube_comments` AS silver
+  ON candidate.comment_id = silver.comment_id;
 ```
 
 > **Nota sobre el índice vectorial:** `CREATE VECTOR INDEX IF NOT EXISTS` asegura que el índice no se recree en cada ejecución. BigQuery actualiza el índice incrementalmente a medida que se insertan nuevos embeddings; no requiere reconstrucción manual.
+>
+> **Actualización (2026-08-02):** `gold_youtube_embeddings` solo almacena `(comment_id, text_embedding)` — nunca `comment_text` (ver §4.3 arriba, `ML.GENERATE_EMBEDDING` solo inserta esas dos columnas). La versión original de esta consulta asumía `candidate.comment_text` disponible directamente en el resultado de `VECTOR_SEARCH`, lo cual habría fallado en ejecución. Se corrigió agregando el `JOIN` contra `silver_youtube_comments` — decisión documentada en `.claude/skills/gold-vector-search/SKILL.md`.
 
 ---
 

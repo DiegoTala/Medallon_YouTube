@@ -22,7 +22,7 @@ API Key de servidor (sin OAuth 2.0, sin usuario interactivo), leída desde Secre
 1. `search.list` (o `playlistItems.list` sobre el uploads playlist del canal) filtrando por `publishedAfter = now - 7 días`, `maxResults=50`, paginado hasta agotar `nextPageToken` (tope duro: 100 elementos por query según matriz de riesgos del PRD).
 2. `videos.list` con `part=snippet,contentDetails,statistics` para los IDs obtenidos, para traer duración/vistas/likes en una sola llamada por lote (hasta 50 IDs por request).
 3. Cada respuesta cruda se serializa como una línea JSON (JSON Lines) por video.
-4. Escribir a `gs://bucket-yt-bronze/raw/anio=YYYY/mes=MM/dia=DD/videos_batch_data.json`, particionado por la **fecha de ejecución** del batch (no por fecha de publicación del video).
+4. Escribir a `gs://bucket-yt-bronze/raw/anio=YYYY/mes=MM/dia=DD/videos_batch_data_<batch_execution_id>.json`, particionado por la **fecha de ejecución** del batch (no por fecha de publicación del video). El sufijo `<batch_execution_id>` es obligatorio: sin él, una segunda corrida el mismo día sobreescribiría silenciosamente el archivo del batch anterior, violando la invariante de inmutabilidad (ver más abajo; corregido 2026-08-02).
 
 ## Snippet de ejemplo (Python)
 
@@ -61,10 +61,10 @@ def fetch_recent_videos(youtube, channel_id: str, days: int = 7) -> list[dict]:
     return videos_raw
 
 
-def write_bronze_jsonl(records: list[dict], bucket, batch_date: datetime) -> str:
+def write_bronze_jsonl(records: list[dict], bucket, batch_date: datetime, batch_execution_id: str) -> str:
     path = (
         f"raw/anio={batch_date:%Y}/mes={batch_date:%m}/dia={batch_date:%d}"
-        "/videos_batch_data.json"
+        f"/videos_batch_data_{batch_execution_id}.json"
     )
     blob = bucket.blob(path)
     blob.upload_from_string(
@@ -76,7 +76,7 @@ def write_bronze_jsonl(records: list[dict], bucket, batch_date: datetime) -> str
 
 ## Invariantes
 
-- **Inmutable:** una vez escrito, un archivo bronze nunca se sobreescribe ni edita; una re-ejecución del mismo día genera un nuevo archivo o se anexa, nunca reemplaza el histórico.
+- **Inmutable:** una vez escrito, un archivo bronze nunca se sobreescribe ni edita; una re-ejecución del mismo día genera un nuevo archivo o se anexa, nunca reemplaza el histórico. Se garantiza incluyendo `batch_execution_id` en el nombre del archivo (no solo la partición por fecha, que por sí sola no es suficiente para distinguir dos corridas el mismo día).
 - **Sin validación aquí:** no se descarta ningún registro en esta capa, ni siquiera si luce corrupto — eso es trabajo de [[silver-validation-videos]] / [[silver-dead-letter-queue]].
 - **Límite de canales:** exactamente 5 canales, configurados fuera del código (variable de entorno o tabla de configuración), nunca hardcodeados en el script.
 
