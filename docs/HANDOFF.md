@@ -1,6 +1,6 @@
 # Handoff de sesión — YouTube DJ Analytics
 
-**Fecha de corte:** 2026-08-02
+**Fecha de corte:** 2026-08-02 (actualizado 17:10 -06:00)
 **Propósito:** retomar el trabajo en otra sesión sin perder contexto. No es especificación (eso es `docs/PRD.md`) ni changelog de git — es una foto del estado + próximos pasos.
 
 ---
@@ -27,10 +27,14 @@ Todo el pipeline está implementado en `src/medallon_youtube/` y pasa **41/41 te
 
 ## 2. Estado de infraestructura (GCP real)
 
-**Lo único aplicado hasta ahora:** el bucket de Terraform state (`medallon-youtube-tfstate`), vía approval-gate aprobado por Diego ("Aprobado!", 2026-08-02T16:59:30-06:00). Ver `infra/APPROVALS.md` para el registro completo. Backend remoto ya migrado y en uso — `infra/main.tf` tiene el bloque `backend "gcs"` activo (sin comentar).
+**Aplicado hasta ahora (2 ciclos de approval-gate, ver `infra/APPROVALS.md` para el registro completo):**
 
-**Todo lo demás en `infra/*.tf` está escrito y validado (`terraform fmt` + `terraform validate` pasan) pero NO aplicado:**
-GCS bronze, datasets/tablas BigQuery (staging/silver/gold + dead-letter queue), conexión BigQuery↔Vertex AI + modelos remotos (`gemini_flash_model`, `embedding_model`), Artifact Registry, Secret Manager (contenedor vacío), Cloud Run Job, Cloud Scheduler, IAM de mínimo privilegio.
+1. Bucket de Terraform state (`medallon-youtube-tfstate`), aprobado 2026-08-02T16:59:30-06:00. Backend remoto migrado y en uso — `infra/main.tf` tiene `backend "gcs"` activo.
+2. **23 de 26 recursos restantes**, aprobado y aplicado 2026-08-02T17:10:35-06:00 (`terraform apply tfplan_partial`, sin errores): GCS bronze (`medallon-youtube-yt-bronze`), datasets/tablas BigQuery completos (staging/silver/gold + dead-letter queue), conexión BigQuery↔Vertex AI + modelos remotos ya creados (`gemini_flash_model`, `embedding_model`), Artifact Registry (`yt-pipeline`), Secret Manager (contenedor vacío `youtube-api-key`), IAM de mínimo privilegio, service accounts (`yt-ingestion-job`, `yt-scheduler-invoker`).
+
+**Deliberadamente NO aplicado — 3 recursos diferidos:** `google_cloud_run_v2_job.yt_ingestion`, `google_cloud_run_v2_job_iam_member.scheduler_can_invoke`, `google_cloud_scheduler_job.weekly_trigger`. Razón: el Job referencia una imagen Docker en Artifact Registry (`${region}-docker.pkg.dev/.../ingestion:${var.image_tag}`) que todavía no existe — `deploy-release` nunca se ha corrido. Aplicar el Job ahora arriesgaba un apply fallido a mitad de camino. El plan targeted (23 recursos) sigue guardado en `infra/tfplan_partial` por si hace falta re-generar el diff, pero es local (no versionado) y puede quedar obsoleto — regenerar con `terraform plan` antes de confiar en él.
+
+**Nota de secuencia para retomar (ajuste sobre el flujo original de `deploy-release/SKILL.md`):** ese skill asume que el Job ya existe y solo hace `gcloud run jobs update --image=...`. Como el Job se difirió, el flujo real para el *primer* release es: (a) build+push de la imagen a `yt-pipeline` con tag = SHA corto de commit, (b) fijar `var.image_tag` en `infra/terraform.tfvars` a ese SHA, (c) un segundo ciclo de approval-gate + `terraform apply` (targeted a los 3 recursos diferidos) que crea el Job ya apuntando a la imagen real — sin necesidad de `gcloud run jobs update` para este primer release. Los releases *siguientes* sí usan el flujo normal de `deploy-release` (`gcloud run jobs update --image=...`) sobre el Job ya existente.
 
 ### Los 5 canales configurados (`infra/terraform.tfvars`)
 
@@ -59,12 +63,13 @@ terraform plan ...   # el provider google detecta esta env var automáticamente
 
 ## 4. Próximos pasos, en orden
 
-1. **Plan + cotización del resto de la infraestructura** (GCS bronze, BigQuery, conexión Vertex AI, Artifact Registry, Cloud Run Job, Scheduler, IAM) → approval-gate → `apply`. Costo esperado, según línea base del PRD: ~$1.40–$1.80 USD/mes (muy por debajo del techo de $15).
-2. **Cargar el valor real de `YOUTUBE_API_KEY`** en Secret Manager (`gcloud secrets versions add youtube-api-key --data-file=-`) — Diego lo hace directamente, fuera de Terraform. Bloqueado hasta que el paso 1 cree el secreto contenedor.
-3. **`deploy-release`:** build + push de la imagen Docker (`Dockerfile` ya existe, nunca se construyó) y `gcloud run jobs update --image` — pasa por approval-gate.
-4. **Primera corrida real** del Cloud Run Job (manual, no esperar al cron semanal) + verificación con `gcloud-diagnostics` (logs, filas en `silver_dead_letter_queue`, etc.).
-5. **Registrar cada aprobación** en `infra/APPROVALS.md` conforme se ejecuten los pasos 1 y 3.
+1. ~~Plan + cotización del resto de la infraestructura → approval-gate → apply.~~ **Hecho parcialmente 2026-08-02T17:10:35-06:00** — 23/26 recursos aplicados sin errores, costo real $0.00/mes (nada corre todavía). Faltan 3 (Job, su IAM binding, Scheduler) — ver §2 para por qué se difirieron y el plan de secuencia ajustado.
+2. **Cargar el valor real de `YOUTUBE_API_KEY`** en Secret Manager (`gcloud secrets versions add youtube-api-key --data-file=-`) — Diego lo hace directamente, fuera de Terraform. **Ya desbloqueado** — el secreto contenedor existe desde el paso 1.
+3. **`deploy-release`:** build + push de la imagen Docker (`Dockerfile` ya existe, nunca se construyó) a `yt-pipeline` (Artifact Registry, ya existe) con tag = SHA corto de commit.
+4. **Segundo ciclo de approval-gate + `terraform apply`** (targeted a los 3 recursos diferidos, con `var.image_tag` en `infra/terraform.tfvars` fijado al SHA del paso 3) — crea el Cloud Run Job ya apuntando a la imagen real, más el Scheduler. Sin necesidad de `gcloud run jobs update` para este primer release (ver nota de secuencia en §2); releases futuros sí usan ese comando vía el flujo normal de `deploy-release`.
+5. **Primera corrida real** del Cloud Run Job (manual, no esperar al cron semanal) + verificación con `gcloud-diagnostics` (logs, filas en `silver_dead_letter_queue`, etc.).
+6. **Registrar cada aprobación** en `infra/APPROVALS.md` conforme se ejecuten los pasos 3 y 4 (ya son 2 entradas registradas de sesiones previas).
 
 ## 5. Sin commitear
 
-Todo el trabajo de esta sesión (código nuevo, `infra/*.tf`, cambios a skills y PRD) sigue sin commitear — está en el working tree. Correr `git status` al retomar para confirmar que sigue así, o para ver si Diego ya lo commiteó por su cuenta.
+`docs/HANDOFF.md` y `.gitignore` (se agregó `tfplan*`) tienen cambios de esta sesión sin commitear — el resto del working tree está limpio (el código e infra de la sesión anterior ya se commiteó en `acab07d`). Correr `git status` al retomar para confirmar.

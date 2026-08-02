@@ -45,3 +45,19 @@ resource "google_cloud_run_v2_job_iam_member" "scheduler_can_invoke" {
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
 }
+
+# Google dejó de auto-otorgar roles a la default Compute Engine SA en proyectos
+# nuevos. deploy-release usa `gcloud builds submit` con esta SA (default de
+# Cloud Build) para construir/publicar la imagen de ingesta — sin estos 2 roles
+# ni siquiera puede leer el tarball de source que sube a GCS.
+resource "google_project_iam_member" "cloudbuild_default_sa_storage_viewer" {
+  project = var.project_id
+  role    = "roles/storage.objectViewer"
+  member  = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "cloudbuild_default_sa_artifactregistry_writer" {
+  project = var.project_id
+  role    = "roles/artifactregistry.writer"
+  member  = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+}

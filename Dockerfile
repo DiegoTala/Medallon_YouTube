@@ -3,7 +3,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
+COPY src/ ./src/
 RUN uv sync --frozen --no-dev
 
-COPY src/ ./src/
 ENTRYPOINT ["uv", "run", "python", "-m", "medallon_youtube.main"]
