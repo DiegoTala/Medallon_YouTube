@@ -18,7 +18,7 @@ resource "google_cloud_run_v2_job" "yt_ingestion" {
           name = "YOUTUBE_API_KEY"
           value_source {
             secret_key_ref {
-              secret  = google_secret_manager_secret.youtube_api_key.secret_id
+              secret  = data.google_secret_manager_secret.youtube_api_key.secret_id
               version = "latest"
             }
           }

@@ -54,3 +54,23 @@ Para decomisiones (terraform-decommission), prefijar el título con [DESTROY].
 - **¿Contiene datos / requirió backup?:** No — creación, no destrucción; no aplica backup.
 - **Aprobado por:** Diego (verbatim: "Aprobado", vía selección explícita en pregunta de aprobación que citaba el plan de 2 recursos y el costo $0.00)
 - **Ejecutado:** sí — sin errores. `Apply complete! Resources: 2 added, 0 changed, 0 destroyed.`
+
+## 2026-08-02T17:30:19-06:00 — terraform-decommission — [DESTROY] youtube-api-key-secret-container
+
+- **Recurso(s):** google_secret_manager_secret.youtube_api_key, google_secret_manager_secret_iam_member.yt_ingestion_job_secret_accessor (binding sobre el secreto anterior).
+- **Motivo:** Diego indicó que ya existe un secreto separado `API-YouTube` (creado manualmente fuera de Terraform, con el valor real ya cargado — 1 versión enabled) y pidió usar ese en vez del contenedor `youtube-api-key` que este arnés había provisionado. Se reemplazó por `data "google_secret_manager_secret" "youtube_api_key" { secret_id = "API-YouTube" }` en `infra/secrets.tf` (solo lectura, Terraform nunca gestiona su ciclo de vida ni contenido) y se actualizaron las referencias en `infra/iam.tf` y `infra/cloud_run.tf`.
+- **¿Contiene datos / requirió backup?:** No — el secreto `youtube-api-key` tenía 0 versiones (nunca se cargó ningún valor). No aplica backup.
+- **Comando:** `terraform apply "tfplan_destroy_old_secret"` (plan generado con `terraform plan -destroy -target=...` para ambos recursos)
+- **Costo estimado del ahorro:** $0.00 USD/mes (ya era gratis — Secret Manager cobra por versión activa, y este contenedor no tenía ninguna)
+- **Aprobado por:** Diego (verbatim: "Aprobado, destruye", en respuesta a pregunta específica de destroy que citaba el plan de 2 recursos y confirmaba 0 versiones/sin datos)
+- **Ejecutado:** sí — sin errores. `Apply complete! Resources: 0 added, 0 changed, 2 destroyed.`
+
+## 2026-08-02T17:33:01-06:00 — terraform-provision — cloud-run-job-y-scheduler
+
+- **Recurso(s):** google_cloud_run_v2_job.yt_ingestion (imagen `us-central1-docker.pkg.dev/medallon-youtube/yt-pipeline/ingestion:5737210`, `YOUTUBE_API_KEY` vía secreto `API-YouTube`), google_cloud_run_v2_job_iam_member.scheduler_can_invoke, google_cloud_scheduler_job.weekly_trigger (lunes 02:00 UTC), google_secret_manager_secret_iam_member.yt_ingestion_job_secret_accessor (sobre `API-YouTube`).
+- **Comando:** `terraform apply "tfplan_job_scheduler2"`
+- **Costo estimado incremental:** ~$0.15 USD/mes (Cloud Run Job, baseline PRD) una vez que el cron dispare — Cloud Scheduler es gratis (nivel gratuito).
+- **Costo total estimado tras el cambio:** ~$0.15–$1.80 / $15.00 USD (rango completo del baseline PRD, según volumen real de comentarios procesados por Gold)
+- **¿Contiene datos / requirió backup?:** No — creación, no destrucción; no aplica backup.
+- **Aprobado por:** Diego (verbatim: "Aprobado", vía selección explícita en pregunta que citaba los 4 recursos y el costo estimado)
+- **Ejecutado:** sí — sin errores. `Apply complete! Resources: 4 added, 0 changed, 0 destroyed.` Esto completa el despliegue de toda la infraestructura declarada en `infra/*.tf` (26/26 recursos aplicados, más los 2 de IAM de Cloud Build).

@@ -1,15 +1,9 @@
-# Contenedor del secreto únicamente. El valor real de la API Key de YouTube
-# NUNCA se declara aquí ni en terraform.tfvars (invariante: ningún secreto en
-# texto plano en archivos versionados). Se agrega manualmente, fuera de
-# Terraform, una sola vez:
-#   gcloud secrets versions add youtube-api-key --data-file=-
-# Ese comando lo ejecuta Diego directamente (no un agente), y no pasa por el
-# approval-gate porque no mueve infraestructura ni tiene costo — es carga de
-# un valor de configuración sensible.
-resource "google_secret_manager_secret" "youtube_api_key" {
-  secret_id = "youtube-api-key"
-
-  replication {
-    auto {}
-  }
+# La API Key de YouTube vive en el secreto "API-YouTube", creado manualmente
+# por Diego fuera de Terraform (con su valor real ya cargado) — nunca se
+# declara aquí como resource ni se referencia su valor en texto plano
+# (invariante: ningún secreto en texto plano en archivos versionados).
+# Este data source solo lo referencia para IAM/env var; Terraform nunca
+# gestiona su ciclo de vida ni su contenido.
+data "google_secret_manager_secret" "youtube_api_key" {
+  secret_id = "API-YouTube"
 }

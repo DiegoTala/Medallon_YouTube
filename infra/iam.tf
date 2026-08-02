@@ -26,7 +26,7 @@ resource "google_project_iam_member" "yt_ingestion_job_bq_job_user" {
 }
 
 resource "google_secret_manager_secret_iam_member" "yt_ingestion_job_secret_accessor" {
-  secret_id = google_secret_manager_secret.youtube_api_key.secret_id
+  secret_id = data.google_secret_manager_secret.youtube_api_key.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.yt_ingestion_job.email}"
 }

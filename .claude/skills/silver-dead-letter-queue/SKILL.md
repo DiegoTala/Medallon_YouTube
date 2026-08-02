@@ -70,6 +70,7 @@ ORDER BY total_rechazos DESC;
 - **No hay reintentos automáticos** de un registro en dead-letter dentro del mismo batch; se corrige el origen (o el schema) y se re-ingiere en la siguiente ventana semanal.
 - **No bloquea el pipeline:** un lote con 500 registros válidos y 3 rechazados completa su MERGE con los 500; los 3 quedan documentados aquí.
 - **`raw_payload` siempre completo:** nunca se trunca ni se redacta el JSON original, para permitir inspección forense.
+- **`raw_payload` se serializa con `json.dumps()` antes de insertarse**, nunca como dict Python crudo: `insert_rows_json` (streaming insert legacy) rechaza un dict anidado en una columna `JSON` con el error `"This field: raw_payload is not a record"` — lo interpreta como un intento de RECORD. Bug real encontrado en la primera corrida productiva del Job (2026-08-02), corregido en `silver/dead_letter.py`.
 
 ## Relación con otros skills
 

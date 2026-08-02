@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 from pydantic import ValidationError
@@ -32,7 +33,7 @@ def test_build_dead_letter_row_captures_first_error_field() -> None:
     assert row["video_id"] == "dQw4w9WgXcQ"
     assert row["comment_id"] is None
     assert row["batch_execution_id"] == "batch-1"
-    assert row["raw_payload"] == raw
+    assert row["raw_payload"] == json.dumps(raw, default=str)
     assert "title" in row["error_field"]
 
 

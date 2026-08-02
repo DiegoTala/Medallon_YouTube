@@ -6,6 +6,7 @@ cada rechazo es un evento inmutable, no se deduplica.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,7 +29,7 @@ def build_dead_letter_row(
         "error_timestamp": datetime.now(timezone.utc).isoformat(),
         "comment_id": comment_id,
         "video_id": video_id,
-        "raw_payload": raw_payload,
+        "raw_payload": json.dumps(raw_payload, default=str),
         "validation_error": str(error),
         "error_field": ".".join(str(p) for p in first_error["loc"]),
         "batch_execution_id": batch_execution_id,
