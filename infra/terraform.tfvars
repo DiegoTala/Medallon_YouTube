@@ -4,7 +4,7 @@ zone       = "us-central1-a"
 
 # Tag inmutable (SHA corto de commit) de la imagen publicada por deploy-release —
 # nunca "latest" en producción (ver .claude/skills/deploy-release/SKILL.md).
-image_tag = "1191c8b"
+image_tag = "0047ad5"
 
 # Channel IDs (UC...) resueltos por scraping de solo lectura de la página pública
 # del canal (sin API key, sin tocar infraestructura). Verificados contra el título

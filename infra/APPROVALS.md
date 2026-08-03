@@ -129,3 +129,16 @@ Para decomisiones (terraform-decommission), prefijar el título con [DESTROY].
 - **¿Contiene datos / requirió backup?:** No — actualización de imagen, no destrucción de datos.
 - **Aprobado por:** Diego (verbatim: "Apruebo, adelante", en respuesta a pregunta que citaba el plan exacto del cambio de imagen y costo $0.00)
 - **Ejecutado:** sí — sin errores. `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Pendiente: re-ejecutar el smoke test una vez resetee la cuota diaria de YouTube API (agotada, ver `docs/HANDOFF.md` §6-bis).
+
+## 2026-08-02T19:41:35-06:00 — deploy-release — redeploy-fix-embeddings-y-vector-search
+
+- **Recurso(s):** google_cloud_run_v2_job.yt_ingestion (solo el campo `image`).
+- **Motivo:** dado que la cuota de YouTube seguía agotada (bloqueando volver a correr el Job completo), Diego pidió probar la capa Gold directamente contra los datos ya existentes en `silver_youtube_comments`/`silver_youtube_videos` (1635 comentarios, 13 videos, cargados en el smoke test previo), sin re-ejecutar Bronze/Silver. Ejecutando las queries de Gold vía `bq query` (mismas plantillas SQL del código) contra BigQuery real se encontraron y corrigieron 2 bugs adicionales del mismo tipo que el de sentimiento (commit `1191c8b`):
+  1. `ML.GENERATE_EMBEDDING` no expone una columna `text_embedding` en su salida (el nombre real es `ml_generate_embedding_result`) — el `INSERT` fallaba con `Unrecognized name: text_embedding`.
+  2. `VECTOR_SEARCH` expone la tabla base bajo el alias `base`, no `candidate`, cuando `query_value` es una subquery escalar — `semantic_search` fallaba con `Unrecognized name: candidate`.
+  Ambos bugs estaban también en el SQL de referencia de `docs/PRD.md`. Verificado end-to-end contra BigQuery real tras el fix: 1635 filas en `gold_sentiment_analysis` (4 etiquetas, sin NULLs) y `gold_youtube_embeddings` (768 dims), `VECTOR_SEARCH` devuelve resultados correctos. El índice IVF no se pudo crear (mínimo 5,000 filas requerido por BigQuery, hay 1,635) — comportamiento esperado, no un bug; documentado en PRD/SKILL.md. 41/41 tests pasan. Commit `0047ad5`.
+- **Comando:** build+push vía `gcloud builds submit --tag=.../ingestion:0047ad5` (Cloud Build), luego `terraform apply "tfplan_redeploy_0047ad5"` (cambia `var.image_tag` de `1191c8b` a `0047ad5`).
+- **Costo estimado incremental:** $0.00 USD/mes (mismo recurso, solo cambia el tag de imagen). El costo real de las queries de prueba contra Gold (1635 llamadas a Gemini + 1635 a embeddings) es marginal, muy por debajo del techo — no se recalculó como línea base nueva porque fue una corrida puntual de backfill/prueba, no un patrón recurrente.
+- **¿Contiene datos / requirió backup?:** No — actualización de imagen, no destrucción de datos.
+- **Aprobado por:** Diego (verbatim: "Apruebo, adelante", en respuesta a pregunta que citaba el plan exacto del cambio de imagen, el resumen de los 2 bugs corregidos y costo $0.00)
+- **Ejecutado:** sí — sin errores. `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Con esto, el Job en producción ya contiene todo el código verificado manualmente contra datos reales.

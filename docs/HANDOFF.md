@@ -1,6 +1,6 @@
 # Handoff de sesión — YouTube DJ Analytics
 
-**Fecha de corte:** 2026-08-02 (actualizado 19:20 -06:00) — el bug de §6 (modelos remotos) quedó **resuelto y verificado**, y en el smoke test siguiente apareció + se corrigió un segundo bug real (SQL de sentimiento, ver §6-bis). Corte actual: cuota diaria de YouTube API agotada por las múltiples corridas de hoy — el pipeline no puede re-ejecutarse completo hasta que resetee (ver §4, primer próximo paso).
+**Fecha de corte:** 2026-08-02 (actualizado 19:41 -06:00) — el bug de §6 (modelos remotos) quedó **resuelto y verificado**, y en los smoke tests siguientes se encontraron y corrigieron 3 bugs reales más en la capa Gold (ver §6-bis y §6-ter). **La capa Gold completa (sentimiento, embeddings, búsqueda semántica) quedó verificada end-to-end contra BigQuery real** — 1635 comentarios clasificados/embebidos, `VECTOR_SEARCH` devuelve resultados correctos. Corte actual: cuota diaria de YouTube API agotada por las múltiples corridas de hoy — Bronze/Silver vía el Job real (no probado con la imagen más reciente) tendrán que esperar al reset de cuota (ver §4).
 **Propósito:** retomar el trabajo en otra sesión sin perder contexto. No es especificación (eso es `docs/PRD.md`) ni changelog de git — es una foto del estado + próximos pasos.
 
 ---
@@ -129,3 +129,21 @@ Con los modelos y el IAM de la conexión ya corregidos, el siguiente smoke test 
 **Por qué el mismo run también falló en los reintentos con `429 rateLimitExceeded` (YouTube API):** cada ejecución del Cloud Run Job corre Bronze→Silver→Gold desde cero; con `max-retries=3`, un fallo en Gold dispara hasta 4 corridas completas de Bronze en la misma ejecución. Sumado a las corridas previas de la sesión (antes de resolver §6), se agotó la cuota diaria de `Search Queries` de YouTube Data API v3. **No es un bug — resetea solo, a medianoche Pacific Time.** No se pidió (ni se debe pedir sin aprobación explícita) un aumento de cuota vía consola — eso tampoco sería un cambio de Terraform, sería una acción manual fuera del arnés.
 
 **Estado al cierre de esta sesión:** fix ya desplegado. Build/push vía Cloud Build (`ingestion:1191c8b`) y `terraform apply` del cambio de imagen del Cloud Run Job, ambos completados y registrados en `infra/APPROVALS.md` (entrada `redeploy-fix-sentiment-comment-text`, 2026-08-02T19:19:46-06:00). Único pendiente real: re-ejecutar el smoke test una vez resetee la cuota diaria de YouTube API — ver §4.
+
+## 6-ter. Dos bugs reales más en Gold, encontrados probando directamente contra BigQuery (imagen desplegada: `ingestion:0047ad5`)
+
+Con la cuota de YouTube agotada, Diego pidió probar solo la capa Gold, sin re-correr Bronze/Silver — los datos ya estaban en `silver_youtube_comments` (1635 filas) y `silver_youtube_videos` (13 filas) de la corrida previa. Se ejecutaron las queries de Gold directamente vía `bq query` (mismas plantillas SQL del código, contra el proyecto real) para no depender de una nueva corrida del Job completo. Esto sacó a la luz dos bugs más del mismo tipo que el de §6-bis:
+
+1. **`ML.GENERATE_EMBEDDING` no expone `text_embedding`:** la columna de salida real de la función es `ml_generate_embedding_result`, no `text_embedding` (ese es solo el nombre de la columna destino en nuestra tabla). `src/medallon_youtube/gold/embeddings.py` seleccionaba `text_embedding` directo de la salida de `ML.GENERATE_EMBEDDING`, lo cual no existe → `Unrecognized name: text_embedding`. Fix: `ml_generate_embedding_result AS text_embedding` en el `SELECT` externo.
+2. **`VECTOR_SEARCH` no expone `candidate`:** el alias real de la tabla base en la salida de `VECTOR_SEARCH` es `base`, no `candidate` — esto aplica cuando `query_value` es una subquery escalar (nuestro caso), no una segunda `TABLE`. `src/medallon_youtube/gold/vector_search.py` (`semantic_search`) usaba `candidate.comment_id` → `Unrecognized name: candidate`. Fix: `base.comment_id`.
+
+Ambos bugs estaban también en el SQL de referencia de `docs/PRD.md` (no eran solo errores del código, sino de la especificación original) — corregidos ahí también, junto con `.claude/skills/gold-embeddings-generation/SKILL.md` y `.claude/skills/gold-vector-search/SKILL.md`. Tests actualizados para fijar ambos fixes (mocks previos no los habrían detectado — no ejecutan SQL real). 41/41 tests pasan.
+
+**Verificación end-to-end tras los fixes (contra BigQuery real, vía `bq query`, sin pasar por el Job):**
+- `gold_sentiment_analysis`: 1635 filas, 4 etiquetas (POSITIVO 1346, NEUTRO 139, NEGATIVO 92, MIXTO 58), sin NULLs.
+- `gold_youtube_embeddings`: 1635 filas, 768 dimensiones confirmadas.
+- `VECTOR_SEARCH` (sin índice, ver abajo): devuelve resultados correctos con `JOIN` a `silver_youtube_comments`.
+
+**Nota — el índice vectorial IVF no se pudo crear, y está bien así:** `CREATE VECTOR INDEX ... OPTIONS(index_type='IVF')` requiere un mínimo de 5,000 filas; con 1,635 filas BigQuery rechaza la creación explícitamente, sugiriendo usar `VECTOR_SEARCH` directamente mientras tanto (que es justo lo que se verificó arriba, y funciona igual de correcto — solo sin la optimización de latencia del índice). No es un bug ni requiere cambio de código; `ensure_vector_index` (`CREATE VECTOR INDEX IF NOT EXISTS`) queda tal cual, simplemente no tendrá efecto hasta cruzar el umbral de filas.
+
+Imagen `ingestion:0047ad5` (commit `0047ad5`) ya construida, publicada y desplegada al Cloud Run Job — ver `infra/APPROVALS.md`, entrada `redeploy-fix-embeddings-y-vector-search` (2026-08-02T19:41:35-06:00). El Job en producción ya tiene todo el código verificado.
