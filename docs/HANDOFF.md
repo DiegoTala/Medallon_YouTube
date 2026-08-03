@@ -64,7 +64,7 @@ export GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token)
 terraform plan ...   # el provider google detecta esta env var automáticamente
 ```
 
-`gcloud auth login` (no ADC) ya está autenticado como `diego@talamantes.com.mx` contra el proyecto `medallon-youtube` — de ahí sale el token. **El token expira en ~1 hora**, hay que regenerarlo (`gcloud auth print-access-token`) en cada sesión nueva de terminal antes de correr Terraform. Esto es solo para uso interactivo local; el Cloud Run Job en producción usa su propia service account vía metadata server, sin este problema.
+`gcloud auth login` (no ADC) ya está autenticado con la cuenta del operador contra el proyecto `medallon-youtube` — de ahí sale el token. **El token expira en ~1 hora**, hay que regenerarlo (`gcloud auth print-access-token`) en cada sesión nueva de terminal antes de correr Terraform. Esto es solo para uso interactivo local; el Cloud Run Job en producción usa su propia service account vía metadata server, sin este problema.
 
 ---
 
