@@ -19,7 +19,7 @@ Igual que en sentiment: dataset BigQuery y modelo remoto deben estar en `us-cent
 INSERT INTO `proyecto.dataset.gold_youtube_embeddings` (comment_id, text_embedding)
 SELECT
   comment_id,
-  text_embedding
+  ml_generate_embedding_result AS text_embedding
 FROM
   ML.GENERATE_EMBEDDING(
     MODEL `proyecto.dataset.embedding_model`,
@@ -32,6 +32,8 @@ FROM
     )
   );
 ```
+
+> **Nota (2026-08-02):** `ML.GENERATE_EMBEDDING` no expone una columna llamada `text_embedding` en su salida — el nombre real es `ml_generate_embedding_result` (hay que aliasearlo). Sin el alias, el `INSERT` falla con `Unrecognized name: text_embedding`. Bug real encontrado al correr la capa Gold end-to-end contra datos reales — el snippet de arriba ya lo tiene corregido.
 
 ## Por qué es `INSERT` y no `MERGE`
 

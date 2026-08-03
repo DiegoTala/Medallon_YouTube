@@ -199,10 +199,14 @@ WHEN NOT MATCHED THEN
   );
 
 -- 2. Generación de Embeddings (INSERT incremental)
+-- docs-maintenance (2026-08-02): ML.GENERATE_EMBEDDING no devuelve una columna
+-- llamada "text_embedding" — el nombre real de salida es
+-- ml_generate_embedding_result, hay que aliasearlo. Bug real encontrado al
+-- correr la capa Gold end-to-end (InvalidQuery: "Unrecognized name: text_embedding").
 INSERT INTO `proyecto.dataset.gold_youtube_embeddings` (comment_id, text_embedding)
 SELECT
   comment_id,
-  text_embedding
+  ml_generate_embedding_result AS text_embedding
 FROM
   ML.GENERATE_EMBEDDING(
     MODEL `proyecto.dataset.embedding_model`,
@@ -222,7 +226,7 @@ OPTIONS(distance_type='COSINE', index_type='IVF');
 
 -- 4. Ejemplo de Búsqueda Semántica por Similitud de Coseno
 SELECT
-  candidate.comment_id AS similar_comment_id,
+  base.comment_id AS similar_comment_id,
   silver.comment_text AS similar_text,
   distance
 FROM
@@ -238,12 +242,16 @@ FROM
     distance_type => 'COSINE'
   )
 JOIN `proyecto.dataset.silver_youtube_comments` AS silver
-  ON candidate.comment_id = silver.comment_id;
+  ON base.comment_id = silver.comment_id;
 ```
 
 > **Nota sobre el índice vectorial:** `CREATE VECTOR INDEX IF NOT EXISTS` asegura que el índice no se recree en cada ejecución. BigQuery actualiza el índice incrementalmente a medida que se insertan nuevos embeddings; no requiere reconstrucción manual.
 >
 > **Actualización (2026-08-02):** `gold_youtube_embeddings` solo almacena `(comment_id, text_embedding)` — nunca `comment_text` (ver §4.3 arriba, `ML.GENERATE_EMBEDDING` solo inserta esas dos columnas). La versión original de esta consulta asumía `candidate.comment_text` disponible directamente en el resultado de `VECTOR_SEARCH`, lo cual habría fallado en ejecución. Se corrigió agregando el `JOIN` contra `silver_youtube_comments` — decisión documentada en `.claude/skills/gold-vector-search/SKILL.md`.
+>
+> **Actualización (2026-08-02, corrección adicional):** el alias `candidate` para la tabla base de `VECTOR_SEARCH` era incorrecto — cuando `query_value` se pasa como subquery escalar (no como un segundo argumento `TABLE`), BigQuery expone las columnas de la tabla base bajo el alias `base`, no `candidate`. Bug real confirmado en ejecución (`Unrecognized name: candidate`), corregido arriba y en `src/medallon_youtube/gold/vector_search.py`.
+>
+> **Actualización (2026-08-02, límite mínimo de filas para IVF):** `CREATE VECTOR INDEX ... OPTIONS(index_type='IVF')` requiere un mínimo de 5,000 filas en la tabla — BigQuery rechaza la creación por debajo de ese umbral con un mensaje explícito, sugiriendo usar `VECTOR_SEARCH` directamente (sin índice) mientras tanto. Al volumen actual del proyecto (~1,600-2,500 comentarios acumulados), el índice **no se puede crear todavía**; esto no es un bug — `VECTOR_SEARCH` funciona igual de correcto sin índice (búsqueda exhaustiva/brute-force), solo sin la optimización de latencia que el índice aportaría a partir de 5,000 filas. `ensure_vector_index` sigue siendo correcto tal cual está (`CREATE VECTOR INDEX IF NOT EXISTS`); simplemente no tendrá efecto hasta que se cruce el umbral, momento en el que BigQuery lo creará sin cambios de código.
 
 ---
 

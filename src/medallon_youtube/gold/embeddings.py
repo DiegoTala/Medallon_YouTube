@@ -12,7 +12,7 @@ INSERT_SQL_TEMPLATE = """
 INSERT INTO `{gold_table}` (comment_id, text_embedding)
 SELECT
   comment_id,
-  text_embedding
+  ml_generate_embedding_result AS text_embedding
 FROM
   ML.GENERATE_EMBEDDING(
     MODEL `{embedding_model}`,

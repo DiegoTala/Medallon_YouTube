@@ -42,7 +42,7 @@ def semantic_search(
         raise ValueError(f"top_k no puede exceder {MAX_TOP_K} (invariante de gold-vector-search)")
 
     query = f"""
-        SELECT candidate.comment_id AS similar_comment_id,
+        SELECT base.comment_id AS similar_comment_id,
                silver.comment_text AS similar_text,
                distance
         FROM VECTOR_SEARCH(
@@ -54,7 +54,7 @@ def semantic_search(
             distance_type => 'COSINE'
         )
         JOIN `{silver_comments_table}` AS silver
-          ON candidate.comment_id = silver.comment_id
+          ON base.comment_id = silver.comment_id
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[

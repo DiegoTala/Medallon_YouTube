@@ -45,6 +45,11 @@ def test_run_embeddings_generation_runs_insert_with_incremental_filter() -> None
     assert "INSERT INTO" in sql
     assert "gold_youtube_embeddings" in sql
     assert "WHERE e.comment_id IS NULL" in sql
+    # ML.GENERATE_EMBEDDING no expone una columna "text_embedding" en su salida
+    # (el nombre real es ml_generate_embedding_result) — sin el alias explícito,
+    # el INSERT falla con "Unrecognized name: text_embedding" (bug real
+    # encontrado al correr la capa Gold end-to-end contra datos reales).
+    assert "ml_generate_embedding_result AS text_embedding" in sql
 
 
 def test_ensure_vector_index_uses_if_not_exists() -> None:
@@ -89,6 +94,12 @@ def test_semantic_search_joins_silver_comments_for_text() -> None:
     sql = client.query.call_args.args[0]
     assert "JOIN `proj.silver.silver_youtube_comments`" in sql
     assert "silver.comment_text AS similar_text" in sql
+    # VECTOR_SEARCH no expone un alias "candidate" para la tabla base cuando
+    # query_value es una subquery escalar (no una segunda TABLE) — el alias
+    # real es "base". Bug real encontrado al correr la búsqueda semántica
+    # contra datos reales ("Unrecognized name: candidate").
+    assert "base.comment_id AS similar_comment_id" in sql
+    assert "ON base.comment_id = silver.comment_id" in sql
     _, kwargs = client.query.call_args
     params = {p.name: p.value for p in kwargs["job_config"].query_parameters}
     assert params == {"query_comment_id": "c1", "top_k": 5}

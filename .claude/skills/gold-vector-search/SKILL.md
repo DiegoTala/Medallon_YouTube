@@ -29,7 +29,7 @@ vez de duplicarlo en la tabla de embeddings:
 
 ```sql
 SELECT
-  candidate.comment_id AS similar_comment_id,
+  base.comment_id AS similar_comment_id,
   silver.comment_text AS similar_text,
   distance
 FROM
@@ -45,8 +45,12 @@ FROM
     distance_type => 'COSINE'
   )
 JOIN `proyecto.dataset.silver_youtube_comments` AS silver
-  ON candidate.comment_id = silver.comment_id;
+  ON base.comment_id = silver.comment_id;
 ```
+
+> **Nota (2026-08-02):** el alias de la tabla base en `VECTOR_SEARCH` es `base`, no `candidate` — cuando `query_value` se pasa como subquery escalar (como aquí, no como un segundo argumento `TABLE`), BigQuery expone las columnas de la tabla que se busca bajo `base.*`. Usar `candidate.*` falla con `Unrecognized name: candidate` (bug real confirmado en ejecución). El snippet de arriba y el de Python más abajo ya lo tienen corregido.
+>
+> **Nota (2026-08-02): mínimo de 5,000 filas para el índice IVF.** `CREATE VECTOR INDEX ... OPTIONS(index_type='IVF')` falla si la tabla tiene menos de 5,000 filas (BigQuery lo rechaza explícitamente, sugiriendo usar `VECTOR_SEARCH` sin índice mientras tanto). No es un error de código — `ensure_vector_index` (`CREATE VECTOR INDEX IF NOT EXISTS`) sigue siendo correcto tal cual; simplemente no crea nada hasta cruzar el umbral, y `VECTOR_SEARCH` funciona igual de correcto sin índice (solo sin la optimización de latencia). No cambiar `ensure_vector_index` para "forzar" la creación por debajo de 5,000 filas.
 
 > **Decisión (2026-08-02):** se evaluó agregar `comment_text` como columna
 > duplicada en `gold_youtube_embeddings` (evita el JOIN) contra hacer el JOIN
@@ -68,7 +72,7 @@ def semantic_search(
     top_k: int = 10,
 ):
     query = f"""
-        SELECT candidate.comment_id AS similar_comment_id,
+        SELECT base.comment_id AS similar_comment_id,
                silver.comment_text AS similar_text,
                distance
         FROM VECTOR_SEARCH(
@@ -80,7 +84,7 @@ def semantic_search(
             distance_type => 'COSINE'
         )
         JOIN `{silver_comments_table}` AS silver
-          ON candidate.comment_id = silver.comment_id
+          ON base.comment_id = silver.comment_id
     """
     job_config = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("query_comment_id", "STRING", query_comment_id),
