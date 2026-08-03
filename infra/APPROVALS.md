@@ -119,3 +119,13 @@ Para decomisiones (terraform-decommission), prefijar el título con [DESTROY].
 - **¿Contiene datos / requirió backup?:** No — creación, no destrucción.
 - **Aprobado por:** Diego (verbatim: "Apruebo, aplica y re-ejecuta", en respuesta a pregunta que citaba el plan de 1 recurso y costo $0.00)
 - **Ejecutado:** sí — sin errores. `Apply complete! Resources: 1 added, 0 changed, 0 destroyed.`
+
+## 2026-08-02T19:19:46-06:00 — deploy-release — redeploy-fix-sentiment-comment-text
+
+- **Recurso(s):** google_cloud_run_v2_job.yt_ingestion (solo el campo `image`).
+- **Motivo:** el smoke test posterior al fix de §6 del handoff avanzó hasta Gold y falló con `400 BadRequest: Unrecognized name: comment_text` en el `MERGE` de `run_sentiment_analysis` — la subquery de entrada a `ML.GENERATE_TEXT` no seleccionaba `s.comment_text` como columna propia (solo la usaba dentro del `CONCAT` del prompt). Corregido en commit `1191c8b`, junto con los fixes de §6 (modelos remotos + IAM de conexión ya aplicados vía Terraform en ciclos anteriores). 41/41 tests pasan.
+- **Comando:** build+push vía `gcloud builds submit --tag=.../ingestion:1191c8b` (Cloud Build), luego `terraform apply "tfplan_redeploy_1191c8b"` (cambia `var.image_tag` de `1055137` a `1191c8b` en `infra/terraform.tfvars`).
+- **Costo estimado incremental:** $0.00 USD/mes (mismo recurso, solo cambia el tag de imagen).
+- **¿Contiene datos / requirió backup?:** No — actualización de imagen, no destrucción de datos.
+- **Aprobado por:** Diego (verbatim: "Apruebo, adelante", en respuesta a pregunta que citaba el plan exacto del cambio de imagen y costo $0.00)
+- **Ejecutado:** sí — sin errores. `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Pendiente: re-ejecutar el smoke test una vez resetee la cuota diaria de YouTube API (agotada, ver `docs/HANDOFF.md` §6-bis).
