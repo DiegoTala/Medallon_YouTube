@@ -17,12 +17,36 @@ resource "google_bigquery_dataset_iam_member" "yt_ingestion_job_silver_editor" {
   member     = "serviceAccount:${google_service_account.yt_ingestion_job.email}"
 }
 
+# Gap real encontrado en la primera corrida productiva: sin este grant, el Job
+# no puede correr ML.GENERATE_TEXT/ML.GENERATE_EMBEDDING (necesita leer el
+# modelo remoto) ni escribir gold_sentiment_analysis/gold_youtube_embeddings
+# vía MERGE — falla con 403 Access Denied sobre gold.gemini_flash_model.
+resource "google_bigquery_dataset_iam_member" "yt_ingestion_job_gold_editor" {
+  dataset_id = google_bigquery_dataset.gold.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.yt_ingestion_job.email}"
+}
+
 # roles/bigquery.jobUser es un rol de proyecto (no existe a nivel dataset):
 # necesario para que el job pueda lanzar load jobs y queries (MERGE/TRUNCATE).
 resource "google_project_iam_member" "yt_ingestion_job_bq_job_user" {
   project = var.project_id
   role    = "roles/bigquery.jobUser"
   member  = "serviceAccount:${google_service_account.yt_ingestion_job.email}"
+}
+
+# Gap real encontrado en la corrida post-fix de modelos remotos: el Job puede
+# leer/escribir el dataset gold, pero ML.GENERATE_TEXT/ML.GENERATE_EMBEDDING
+# también requieren permiso explícito sobre la *conexión* BigQuery→Vertex AI
+# (bigquery.connections.use) — es un recurso distinto del dataset, con su
+# propio IAM. Sin esto: "403 Access Denied: ... User does not have
+# bigquery.connections.use permission for connection ...vertex-ai-connection".
+resource "google_bigquery_connection_iam_member" "yt_ingestion_job_connection_user" {
+  project       = var.project_id
+  location      = var.region
+  connection_id = google_bigquery_connection.vertex_ai.connection_id
+  role          = "roles/bigquery.connectionUser"
+  member        = "serviceAccount:${google_service_account.yt_ingestion_job.email}"
 }
 
 resource "google_secret_manager_secret_iam_member" "yt_ingestion_job_secret_accessor" {

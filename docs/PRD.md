@@ -146,6 +146,8 @@ WHEN NOT MATCHED THEN
 Toda la capa Gold se procesa directamente en BigQuery utilizando funciones remotas e integraciones nativas con los modelos de Vertex AI. A diferencia de las capas Bronze y Silver, aquí se aplica un enfoque **incremental estricto** para no reprocesar datos ya analizados y controlar los costos de Vertex AI.
 
 * **Análisis de Sentimiento:** Se utiliza `ML.GENERATE_TEXT` conectada al modelo `gemini-1.5-flash` de Vertex AI. Los resultados se persisten en `gold_sentiment_analysis` mediante un `MERGE` que solo procesa comentarios nuevos (identificados con `LEFT JOIN ... WHERE IS NULL`). La respuesta del modelo se parsea con `JSON_EXTRACT_SCALAR` para extraer la etiqueta de sentimiento.
+
+  > **Actualización (2026-08-02):** `gemini-1.5-flash` fue retirado de Vertex AI (confirmado vía `GET publishers/google/models/gemini-1.5-flash` → `404 NOT_FOUND`). El `ENDPOINT` del modelo remoto `gold.gemini_flash_model` (`infra/bigquery.tf`) se actualizó a `gemini-2.5-flash` — mismo tier "flash", GA en `us-central1`, sin impacto material en el presupuesto estimado de esta sección dado el volumen (~125 comentarios/semana, prompts cortos). Decisión de Diego, ver `.claude/skills/gold-sentiment-analysis/SKILL.md`.
 * **Generación de Embeddings:** Se crean vectores densos de 768 dimensiones mediante `ML.GENERATE_EMBEDDING` con el modelo `text-embedding-004`. Solo se generan embeddings para comentarios que aún no existen en `gold_youtube_embeddings`.
 * **Búsqueda Semántica Nativa:** Se construye un índice vectorial con `CREATE VECTOR INDEX IF NOT EXISTS`, que se actualiza incrementalmente. Las consultas de similitud usan la función `VECTOR_SEARCH` nativa de BigQuery con distancia coseno.
 
@@ -153,6 +155,11 @@ Toda la capa Gold se procesa directamente en BigQuery utilizando funciones remot
 
 ```sql
 -- 1. Análisis de Sentimiento con Vertex AI Gemini (MERGE Idempotente)
+-- docs-maintenance (2026-08-02): la subquery de entrada a ML.GENERATE_TEXT debe
+-- seleccionar s.comment_text explícitamente (no solo comment_id) — ML.GENERATE_TEXT
+-- únicamente pasa a la salida las columnas presentes en su SELECT de entrada, y el
+-- MERGE externo referencia S.comment_text. Bug real encontrado en el primer smoke
+-- test end-to-end (BadRequest: "Unrecognized name: comment_text").
 MERGE INTO `proyecto.dataset.gold_sentiment_analysis` T
 USING (
   SELECT
@@ -165,6 +172,7 @@ USING (
       (
         SELECT
           s.comment_id,
+          s.comment_text,
           CONCAT(
             'Clasifica el sentimiento del siguiente comentario de un video/DJ set como POSITIVO, NEGATIVO, NEUTRO o MIXTO. ',
             'Responde ÚNICAMENTE con una de estas cuatro palabras.',

@@ -158,16 +158,18 @@ resource "google_project_iam_member" "bq_connection_vertex_ai_user" {
 # job_id es un no-op una vez creado. Si cambia la definición del modelo, subir
 # el sufijo de versión del job_id.
 resource "google_bigquery_job" "create_gemini_flash_model" {
-  job_id   = "create-gemini-flash-model-v1"
+  job_id   = "create-gemini-flash-model-v3"
   location = var.region
 
   query {
-    query          = <<-SQL
+    query              = <<-SQL
       CREATE OR REPLACE MODEL `${var.project_id}.gold.gemini_flash_model`
       REMOTE WITH CONNECTION `${var.project_id}.${var.region}.${google_bigquery_connection.vertex_ai.connection_id}`
-      OPTIONS (ENDPOINT = 'gemini-1.5-flash');
+      OPTIONS (ENDPOINT = 'gemini-2.5-flash');
     SQL
-    use_legacy_sql = false
+    use_legacy_sql     = false
+    create_disposition = ""
+    write_disposition  = ""
   }
 
   depends_on = [
@@ -177,16 +179,18 @@ resource "google_bigquery_job" "create_gemini_flash_model" {
 }
 
 resource "google_bigquery_job" "create_embedding_model" {
-  job_id   = "create-embedding-model-v1"
+  job_id   = "create-embedding-model-v3"
   location = var.region
 
   query {
-    query          = <<-SQL
+    query              = <<-SQL
       CREATE OR REPLACE MODEL `${var.project_id}.gold.embedding_model`
       REMOTE WITH CONNECTION `${var.project_id}.${var.region}.${google_bigquery_connection.vertex_ai.connection_id}`
       OPTIONS (ENDPOINT = 'text-embedding-004');
     SQL
-    use_legacy_sql = false
+    use_legacy_sql     = false
+    create_disposition = ""
+    write_disposition  = ""
   }
 
   depends_on = [

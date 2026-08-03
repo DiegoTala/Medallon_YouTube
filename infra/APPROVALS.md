@@ -74,3 +74,48 @@ Para decomisiones (terraform-decommission), prefijar el título con [DESTROY].
 - **¿Contiene datos / requirió backup?:** No — creación, no destrucción; no aplica backup.
 - **Aprobado por:** Diego (verbatim: "Aprobado", vía selección explícita en pregunta que citaba los 4 recursos y el costo estimado)
 - **Ejecutado:** sí — sin errores. `Apply complete! Resources: 4 added, 0 changed, 0 destroyed.` Esto completa el despliegue de toda la infraestructura declarada en `infra/*.tf` (26/26 recursos aplicados, más los 2 de IAM de Cloud Build).
+
+## 2026-08-02T17:49:42-06:00 — deploy-release — redeploy-fix-dead-letter-bug
+
+- **Recurso(s):** google_cloud_run_v2_job.yt_ingestion (solo el campo `image`).
+- **Motivo:** la primera corrida real (`yt-ingestion-job-6snbt`, ejecutada 2026-08-02T23:35 UTC) falló 4/4 intentos con `RuntimeError: Fallo insertando en dead-letter queue... raw_payload is not a record` — bug real en `silver/dead_letter.py` (pasaba un dict Python crudo a una columna BigQuery tipo `JSON` vía `insert_rows_json`, que requiere el valor pre-serializado con `json.dumps()`). Corregido en commit `1055137`, 41/41 tests pasan.
+- **Comando:** build+push vía `gcloud builds submit --tag=.../ingestion:1055137` (Cloud Build), luego `terraform apply "tfplan_redeploy"` (cambia `var.image_tag` de `5737210` a `1055137` en `infra/terraform.tfvars`).
+- **Costo estimado incremental:** $0.00 USD/mes (mismo recurso, solo cambia el tag de imagen; Cloud Build está dentro del nivel gratuito para este volumen de builds).
+- **¿Contiene datos / requirió backup?:** No — actualización de imagen, no destrucción de datos.
+- **Aprobado por:** Diego (verbatim: "Aprobado", en respuesta a pregunta que citaba el diff exacto del cambio de imagen y costo $0.00)
+- **Ejecutado:** sí — sin errores. `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.`
+
+## 2026-08-02T18:01:04-06:00 — terraform-provision — iam-gap-dataset-gold
+
+- **Recurso(s):** google_bigquery_dataset_iam_member.yt_ingestion_job_gold_editor (`roles/bigquery.dataEditor` sobre `gold` para la SA `yt-ingestion-job`).
+- **Motivo:** la ejecución `yt-ingestion-job-lzlg6` (2026-08-02T23:50 UTC) completó Bronze y Silver correctamente (confirma que el fix de dead-letter funcionó) pero falló 4/4 intentos en Gold con `403 Access Denied: Model medallon-youtube.gold.gemini_flash_model` — la SA del Job nunca había recibido ningún grant IAM sobre el dataset `gold`, solo sobre `silver`. Gap real de la provisión original de IAM.
+- **Comando:** `terraform apply "tfplan_gold_iam"`
+- **Costo estimado incremental:** $0.00 USD/mes (binding IAM, sin recurso facturable)
+- **¿Contiene datos / requirió backup?:** No — creación, no destrucción.
+- **Aprobado por:** Diego (verbatim: "Aprobado, aplica y re-ejecuta", en respuesta a pregunta que citaba el plan de 1 recurso y costo $0.00)
+- **Ejecutado:** sí — sin errores. `Apply complete! Resources: 1 added, 0 changed, 0 destroyed.`
+
+## 2026-08-02T18:52:34-06:00 — terraform-provision — fix-modelos-remotos-ml-ddl-y-gemini-retirado
+
+- **Recurso(s):** google_bigquery_job.create_gemini_flash_model, google_bigquery_job.create_embedding_model.
+- **Motivo:** los modelos remotos nunca existieron realmente (ver §6 de `docs/HANDOFF.md` para el diagnóstico completo). Dos causas raíz distintas, resueltas en tres ciclos de apply:
+  1. El provider `hashicorp/google` envía por defecto `create_disposition = "CREATE_IF_NEEDED"` y `write_disposition = "WRITE_EMPTY"` en el bloque `query` de `google_bigquery_job` — BigQuery rechaza ambos parámetros en cualquier query con DDL de ML (`CREATE OR REPLACE MODEL`). Fix: `create_disposition = ""` y `write_disposition = ""` explícitos en `infra/bigquery.tf` (omite el parámetro de la request real).
+  2. `gemini-1.5-flash` fue retirado de Vertex AI (`404 NOT_FOUND` confirmado vía `GET publishers/google/models/gemini-1.5-flash`, diagnóstico de solo lectura). `ENDPOINT` actualizado a `gemini-2.5-flash` (elección explícita de Diego entre 3 alternativas GA disponibles en `us-central1`), documentado en `docs/PRD.md` §4.3 y `.claude/skills/gold-sentiment-analysis/SKILL.md`.
+  3. Job IDs de BigQuery son permanentes en la API aunque el job haya fallado — cada intento fallido "quema" su `job_id`. Se subió el sufijo de versión de `-v1` → `-v2` → `-v3` en ambos jobs conforme se identificaban y corregían las causas.
+- **Comando:** tres ciclos de `terraform apply -target=google_bigquery_job.create_gemini_flash_model -target=google_bigquery_job.create_embedding_model` (uno por cada plan/aprobación distintos, ver bitácora de la sesión).
+- **Costo estimado incremental:** $0.00 USD/mes en los tres ciclos (registrar un modelo remoto no tiene costo propio, solo la inferencia posterior ya contemplada en el baseline del PRD).
+- **Costo total estimado tras el cambio:** sin cambio, ~$1.40–$1.80 / $15.00 USD (baseline PRD; el cambio de `gemini-1.5-flash` a `gemini-2.5-flash` no altera materialmente esta estimación al volumen actual).
+- **¿Contiene datos / requirió backup?:** No — creación de modelos remotos, no destrucción de datos. Los dos primeros ciclos sí destruyeron jobs de BigQuery previos, pero esos jobs solo contenían el registro de una ejecución fallida (sin datos de negocio).
+- **Aprobado por:** Diego — tres aprobaciones verbatim independientes en la misma sesión: (1) "Apruebo, adelante" para el fix de `create_disposition`; (2) "Apruebo, adelante" para el fix de `write_disposition` + bump a `-v2`→`-v3` (pausado una vez para revisar el diagnóstico de Vertex AI antes de re-aprobar); (3) selección explícita de `gemini-2.5-flash` como reemplazo, luego "Apruebo, adelante" para el apply combinado final.
+- **Ejecutado:** sí — sin errores en el ciclo final. `Apply complete! Resources: 2 added, 0 changed, 2 destroyed.` Verificado con `bq show --model` (solo lectura): `gold.gemini_flash_model` → endpoint `gemini-2.5-flash`, `gold.embedding_model` → endpoint `text-embedding-004`, ambos `error_result = []`.
+
+## 2026-08-02T19:04:15-06:00 — terraform-provision — iam-gap-connection-vertex-ai
+
+- **Recurso(s):** google_bigquery_connection_iam_member.yt_ingestion_job_connection_user (`roles/bigquery.connectionUser` sobre `vertex-ai-connection` para la SA `yt-ingestion-job`).
+- **Motivo:** el smoke test `yt-ingestion-job-ltrtn` (2026-08-03T00:53 UTC, primero tras el fix de los modelos remotos) completó Bronze y Silver correctamente pero falló 4/4 intentos en Gold con `403 Access Denied: ... User does not have bigquery.connections.use permission for connection medallon-youtube.us-central1.vertex-ai-connection`. La SA del Job tenía `roles/bigquery.dataEditor` sobre el dataset `gold` (ciclo del 2026-08-02T18:01:04-06:00) pero eso no cubre el IAM de la *conexión* BigQuery↔Vertex AI, que es un recurso separado con su propio control de acceso — gap real no cubierto por la provisión original de IAM.
+- **Comando:** `terraform apply "tfplan_connection_iam"` (plan generado con `-target` explícito para el recurso arriba)
+- **Costo estimado incremental:** $0.00 USD/mes (binding IAM, sin recurso facturable)
+- **Costo total estimado tras el cambio:** $0.00 / $15.00 USD
+- **¿Contiene datos / requirió backup?:** No — creación, no destrucción.
+- **Aprobado por:** Diego (verbatim: "Apruebo, aplica y re-ejecuta", en respuesta a pregunta que citaba el plan de 1 recurso y costo $0.00)
+- **Ejecutado:** sí — sin errores. `Apply complete! Resources: 1 added, 0 changed, 0 destroyed.`

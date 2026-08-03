@@ -1,13 +1,15 @@
 ---
 name: gold-sentiment-analysis
-description: Cómo clasificar sentimiento de comentarios con ML.GENERATE_TEXT sobre el modelo remoto gemini-1.5-flash de Vertex AI, de forma incremental hacia gold_sentiment_analysis. Úsalo al escribir o modificar la clasificación de sentimiento de la capa Gold.
+description: Cómo clasificar sentimiento de comentarios con ML.GENERATE_TEXT sobre el modelo remoto gemini-2.5-flash de Vertex AI, de forma incremental hacia gold_sentiment_analysis. Úsalo al escribir o modificar la clasificación de sentimiento de la capa Gold.
 ---
 
 # gold-sentiment-analysis
 
 ## Alcance
 
-Clasificar cada comentario de `silver_youtube_comments` como POSITIVO, NEGATIVO, NEUTRO o MIXTO usando el modelo remoto `gemini-1.5-flash` de Vertex AI vía `ML.GENERATE_TEXT`, procesando **solo comentarios nuevos** (nunca reprocesar todo el historial — es el principal control de costo de esta capa).
+Clasificar cada comentario de `silver_youtube_comments` como POSITIVO, NEGATIVO, NEUTRO o MIXTO usando el modelo remoto `gemini-2.5-flash` de Vertex AI vía `ML.GENERATE_TEXT`, procesando **solo comentarios nuevos** (nunca reprocesar todo el historial — es el principal control de costo de esta capa).
+
+> **Nota (2026-08-02):** originalmente este skill y el PRD especificaban `gemini-1.5-flash`. Fue retirado de Vertex AI (verificado: `404 NOT_FOUND` al consultar el publisher model) — el `ENDPOINT` se actualizó a `gemini-2.5-flash` en `infra/bigquery.tf`, mismo tier de costo/latencia. El nombre del modelo remoto en BigQuery (`gold.gemini_flash_model`) no cambió, solo el endpoint de Vertex AI al que apunta.
 
 ## Prerrequisito de co-ubicación regional
 
@@ -28,6 +30,7 @@ USING (
       (
         SELECT
           s.comment_id,
+          s.comment_text,
           CONCAT(
             'Clasifica el sentimiento del siguiente comentario de un video/DJ set como POSITIVO, NEGATIVO, NEUTRO o MIXTO. ',
             'Responde ÚNICAMENTE con una de estas cuatro palabras.',
@@ -53,6 +56,10 @@ WHEN NOT MATCHED THEN
     CURRENT_TIMESTAMP()
   );
 ```
+
+## Por qué `s.comment_text` va en el SELECT de entrada a ML.GENERATE_TEXT
+
+`ML.GENERATE_TEXT` solo pasa a la salida las columnas presentes en el `SELECT` de su subquery de entrada — no basta con usar `s.comment_text` dentro del `CONCAT` que arma el prompt, hay que seleccionarlo también como columna propia (junto a `comment_id`). Sin esto, el `MERGE` externo falla con `400 BadRequest: Unrecognized name: comment_text` porque esa columna nunca llegó a la salida de `ML.GENERATE_TEXT`. Bug real encontrado en el primer smoke test end-to-end (2026-08-02) — el snippet de arriba ya lo tiene corregido.
 
 ## Por qué el filtro `WHERE g.comment_id IS NULL` es crítico
 

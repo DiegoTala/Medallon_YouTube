@@ -22,6 +22,7 @@ USING (
       (
         SELECT
           s.comment_id,
+          s.comment_text,
           CONCAT(
             'Clasifica el sentimiento del siguiente comentario de un video/DJ set como POSITIVO, NEGATIVO, NEUTRO o MIXTO. ',
             'Responde ÚNICAMENTE con una de estas cuatro palabras.',

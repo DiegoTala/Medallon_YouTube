@@ -23,6 +23,11 @@ def test_run_sentiment_analysis_runs_merge_with_incremental_filter() -> None:
     assert "gold_sentiment_analysis" in sql
     assert "WHERE g.comment_id IS NULL" in sql
     assert "WHEN MATCHED" not in sql  # nunca reclasifica lo ya existente
+    # ML.GENERATE_TEXT solo pasa a la salida columnas presentes en su SELECT de
+    # entrada: sin seleccionar s.comment_text explícitamente (no solo dentro del
+    # CONCAT del prompt), el MERGE externo fallaría con "Unrecognized name:
+    # comment_text" (bug real encontrado en el smoke test end-to-end).
+    assert "s.comment_id,\n          s.comment_text," in sql
 
 
 def test_run_embeddings_generation_runs_insert_with_incremental_filter() -> None:
