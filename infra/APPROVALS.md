@@ -152,3 +152,24 @@ Para decomisiones (terraform-decommission), prefijar el título con [DESTROY].
 - **¿Contiene datos / requirió backup?:** No — actualización de imagen, no destrucción de datos.
 - **Aprobado por:** Diego (verbatim: "Adelante con el fix!" + "Haz el build, deploy y corre una vez el flujo completo para validar que funciona")
 - **Ejecutado:** sí — build exitoso (43s), deploy exitoso. Ejecución de validación `yt-ingestion-job-fjfh9`: **exit(0), completado en 3m4s**. Logs confirman: `Pipeline completado — batch_execution_id=batch-20260904T023155-f5e262a5` + warning esperado de `ensure_vector_index` (2837 filas < 5000 mínimo IVF). Datos nuevos: silver_videos 36→38, silver_comments 2792→2837, gold_sentiment 2792→2837, gold_embeddings 2792→2837. DLQ sin cambios (30). Pipeline 100% funcional.
+
+## 2026-09-03T22:04:00-06:00 — terraform-provision — agrega-5-canalas-djs
+
+- **Recurso(s):** google_cloud_run_v2_job.yt_ingestion (solo env var `CHANNEL_IDS`).
+- **Motivo:** Diego pidió agregar 5 canales nuevos: Porter Robinson, DubVision, Avicii, Afrojack, Zedd. Se actualizó `infra/terraform.tfvars` con los channel IDs verificados desde las páginas públicas de YouTube, y se actualizó la validación en `infra/variables.tf` (de `== 5` a `>= 1 && <= 20`).
+- **Comando:** `terraform apply "tfplan_channels"`
+- **Costo estimado incremental:** +$0.05 USD/mes (más videos = más llamadas a YouTube API + Vertex AI, pero dentro del techo de $15).
+- **Costo total estimado tras el cambio:** ~$1.85 / $15.00 USD
+- **¿Contiene datos / requirió backup?:** No — actualización de config, no destrucción de datos.
+- **Aprobado por:** Diego (verbatim: "Aprobado!")
+- **Ejecutado:** sí — `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.`
+
+## 2026-09-03T22:04:00-06:00 — deploy-release — ejecucion-10-canales
+
+- **Recurso(s):** Cloud Run Job `yt-ingestion-job` (ejecución manual, sin cambio de imagen).
+- **Motivo:** validar que el pipeline funciona con los 10 canales (5 originales + 5 nuevos).
+- **Comando:** `gcloud run jobs execute yt-ingestion-job --region=us-central1 --project=medallon-youtube`
+- **Costo estimado incremental:** marginal (1 ejecución, ~3 min).
+- **¿Contiene datos / requirió backup?:** No.
+- **Aprobado por:** Diego (verbatim: "Después del terraform apply, corre el flujo completo una vez más para agregar comentarios de los nuevos canales a gcp")
+- **Ejecutado:** sí — `yt-ingestion-job-tmmhd`, exit(0), 3m13s. Datos nuevos: silver_videos 38→44 (+6), silver_comments 2837→3239 (+402), gold_sentiment 2837→3239 (+402), gold_embeddings 2837→3239 (+402). DLQ sin cambios (30).

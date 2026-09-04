@@ -15,15 +15,14 @@ variable "zone" {
 
 variable "channel_ids" {
   description = <<-EOT
-    IDs de canal (formato UC..., NO @handle) de los 5 canales de DJs a ingerir.
-    Exactamente 5 (PRD §2), nunca hardcodeados en el código Python — ver
-    .claude/skills/bronze-ingestion-videos/SKILL.md.
+    IDs de canal (formato UC..., NO @handle) de los canales de DJs a ingerir.
+    Nunca hardcodeados en el código Python — ver .claude/skills/bronze-ingestion-videos/SKILL.md.
   EOT
   type        = list(string)
 
   validation {
-    condition     = length(var.channel_ids) == 5
-    error_message = "channel_ids debe tener exactamente 5 elementos (PRD §2: 5 canales de DJs)."
+    condition     = length(var.channel_ids) >= 1 && length(var.channel_ids) <= 20
+    error_message = "channel_ids debe tener entre 1 y 20 elementos."
   }
 }
 
