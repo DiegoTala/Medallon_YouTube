@@ -96,23 +96,35 @@ def run_pipeline(
     run_embeddings_generation(
         bq_client, config.gold_embeddings_table, config.silver_comments_table, config.embedding_model
     )
-    ensure_vector_index(bq_client, VECTOR_INDEX_NAME, config.gold_embeddings_table)
+
+    # El índice IVF requiere ~5000+ filas; con menos, VECTOR_SEARCH funciona
+    # sin índice (scan bruto). Log warning pero no tumbar el pipeline.
+    try:
+        ensure_vector_index(bq_client, VECTOR_INDEX_NAME, config.gold_embeddings_table)
+    except Exception as exc:
+        print(f"WARNING: ensure_vector_index falló (no crítico): {exc}", flush=True)
 
 
 def main() -> None:
-    api_key = os.environ["YOUTUBE_API_KEY"]
-    config = load_config()
-    batch_date = datetime.now(timezone.utc)
-    batch_execution_id = f"batch-{batch_date:%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}"
+    try:
+        api_key = os.environ["YOUTUBE_API_KEY"]
+        config = load_config()
+        batch_date = datetime.now(timezone.utc)
+        batch_execution_id = f"batch-{batch_date:%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}"
 
-    youtube = build_youtube_client(api_key)
-    gcs_client = storage.Client(project=config.project_id)
-    bq_client = bigquery.Client(project=config.project_id)
+        youtube = build_youtube_client(api_key)
+        gcs_client = storage.Client(project=config.project_id)
+        bq_client = bigquery.Client(project=config.project_id)
 
-    run_pipeline(youtube, gcs_client, bq_client, config, batch_execution_id, batch_date)
+        run_pipeline(youtube, gcs_client, bq_client, config, batch_execution_id, batch_date)
 
-    print(f"Pipeline completado — batch_execution_id={batch_execution_id}")
-    sys.exit(0)
+        print(f"Pipeline completado — batch_execution_id={batch_execution_id}", flush=True)
+        sys.exit(0)
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
