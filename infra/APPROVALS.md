@@ -142,3 +142,13 @@ Para decomisiones (terraform-decommission), prefijar el título con [DESTROY].
 - **¿Contiene datos / requirió backup?:** No — actualización de imagen, no destrucción de datos.
 - **Aprobado por:** Diego (verbatim: "Apruebo, adelante", en respuesta a pregunta que citaba el plan exacto del cambio de imagen, el resumen de los 2 bugs corregidos y costo $0.00)
 - **Ejecutado:** sí — sin errores. `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Con esto, el Job en producción ya contiene todo el código verificado manualmente contra datos reales.
+
+## 2026-09-03T20:27:00-06:00 — deploy-release — fix-ensure-vector-index-error-handling
+
+- **Recurso(s):** google_cloud_run_v2_job.yt_ingestion (solo el campo `image`).
+- **Motivo:** las 10 ejecuciones históricas del Job fallaron todas con exit code 1. Diagnóstico: `ensure_vector_index()` (último paso del pipeline, `main.py:99`) intenta crear un índice IVF que requiere ~5000+ filas; con solo 2792 embeddings, BigQuery rechaza la query. Como no había try-except en todo el orquestador, la excepción propagaba sin control y el proceso moría sin logs (el único `print()` estaba después de `run_pipeline()`, nunca alcanzado en el camino de error). Fix: (1) `ensure_vector_index()` envuelto en try-except — imprime warning pero no tumba el pipeline; (2) try-except global en `main()` con `traceback.print_exc()` a stderr para que Cloud Run capture los logs de error. Commit `1f346ac`, 41/41 tests pasan.
+- **Comando:** build+push vía `gcloud builds submit --tag=.../ingestion:1f346ac` (Cloud Build), luego `gcloud run jobs update yt-ingestion-job --image=.../ingestion:1f346ac`.
+- **Costo estimado incremental:** $0.00 USD/mes (mismo recurso, solo cambia el tag de imagen).
+- **¿Contiene datos / requirió backup?:** No — actualización de imagen, no destrucción de datos.
+- **Aprobado por:** Diego (verbatim: "Adelante con el fix!" + "Haz el build, deploy y corre una vez el flujo completo para validar que funciona")
+- **Ejecutado:** sí — build exitoso (43s), deploy exitoso. Ejecución de validación `yt-ingestion-job-fjfh9`: **exit(0), completado en 3m4s**. Logs confirman: `Pipeline completado — batch_execution_id=batch-20260904T023155-f5e262a5` + warning esperado de `ensure_vector_index` (2837 filas < 5000 mínimo IVF). Datos nuevos: silver_videos 36→38, silver_comments 2792→2837, gold_sentiment 2792→2837, gold_embeddings 2792→2837. DLQ sin cambios (30). Pipeline 100% funcional.
