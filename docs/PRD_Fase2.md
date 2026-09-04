@@ -39,7 +39,7 @@ Las contraseñas:
 - No se almacenarán en el PRD, repositorio, Secret Manager ni Firestore.
 - Se concederá acceso mediante una allowlist de IAP.
 
-Todos los usuarios tendrán acceso equivalente a los datos Gold. Diego tendrá funciones administrativas para monitoreo, cuotas, memoria y caché.
+Todos los usuarios tendrán acceso equivalente a los datos Gold. Diego ejercerá funciones administrativas directamente sobre Cloud Console (Logging, Monitoring, BigQuery, Firestore) mediante un rol IAM elevado, sin una UI administrativa dedicada dentro de la aplicación.
 
 ## 3. Objetivos
 
@@ -50,7 +50,7 @@ Todos los usuarios tendrán acceso equivalente a los datos Gold. Diego tendrá f
 - Mantener el costo total del proyecto por debajo de `$20 USD/mes`.
 - Incorporar memoria de sesión y preferencias explícitas.
 - Impedir consultas fuera del dominio YouTube DJ Analytics.
-- Evaluar la calidad mediante 20 preguntas doradas.
+- Evaluar la calidad mediante 15 preguntas doradas y un set de seguridad de 10 preguntas.
 
 ## 4. Alcance funcional
 
@@ -215,9 +215,13 @@ La tabla será construida incrementalmente por el pipeline Gold y será la únic
 
 La tabla reutilizará los embeddings y el análisis de sentimiento existentes. No se generarán embeddings nuevamente para registros ya procesados.
 
+La tabla se actualizará mediante `MERGE` sobre `comment_id` como clave natural: inserta comentarios nuevos ya clasificados/embebidos y actualiza únicamente los campos de metadatos de video/canal cuando cambien, sin reprocesar sentimiento ni embeddings existentes.
+
 Se podrá crear un índice IVF cuando el volumen cumpla el mínimo de BigQuery. Mientras tanto, `VECTOR_SEARCH` utilizará búsqueda exhaustiva.
 
 ## 9. Memoria en Firestore
+
+Nota de diseño: Google ADK provee un modelo propio de sesiones y memoria pensado para integrarse con Agent Engine. Dado que Agent Engine está fuera de alcance por costo, la memoria de corto y largo plazo se implementará como una capa custom sobre Firestore, externa al runtime de sesiones de ADK. Esta es una decisión de integración deliberada, no el camino por defecto del framework: los agentes deberán leer y escribir explícitamente contra Firestore en lugar de depender del servicio de sesiones nativo de ADK.
 
 ### Memoria corta
 
@@ -319,13 +323,15 @@ Requisitos:
 
 El acceso a la aplicación no dependerá únicamente de headers no verificados. El backend validará la identidad recibida por IAP.
 
+Riesgo técnico a validar antes del MVP: confirmar disponibilidad de IAP nativo sobre Cloud Run (sin Load Balancer) en `us-central1` para el tipo de servicio a desplegar. Si no está disponible, esta sección requiere revisión antes de continuar, dado que el Load Balancer está fuera de alcance.
+
 ## 12. Guardrails
 
 | Guardrail | Regla |
 |---|---|
 | Dominio | Solo preguntas relacionadas con Gold de YouTube DJ Analytics |
 | Cuota diaria | 30 consultas por usuario |
-| Rate limit | Límite adicional por minuto configurable |
+| Rate limit | 5 consultas por minuto por usuario (configurable) |
 | Tokens | Máximo 3.000 tokens por respuesta |
 | BigQuery | `maximum_bytes_billed` de 10 MB por consulta |
 | Recuperación | Máximo 20 resultados |
@@ -342,13 +348,15 @@ Las consultas fuera de alcance recibirán una respuesta controlada indicando que
 
 ## 13. Evaluación
 
-Se creará un set de **20 preguntas doradas**.
+Se creará un set de **15 preguntas doradas**.
 
 Distribución sugerida:
 
-- 7 preguntas de búsqueda semántica.
-- 7 preguntas de analítica de sentimiento.
-- 6 preguntas de tendencias.
+- 5 preguntas de búsqueda semántica.
+- 5 preguntas de analítica de sentimiento.
+- 5 preguntas de tendencias.
+
+Adicionalmente, un set de seguridad independiente de 10 preguntas adversariales (fuera de dominio, intentos de prompt injection, solicitudes de acceso a Bronze/Silver/DLQ) sobre el cual se mide la métrica de rechazo al 100%.
 
 Cada pregunta tendrá:
 
@@ -386,6 +394,7 @@ Recursos principales:
 - Cloud Monitoring.
 - IAM.
 - Terraform.
+- Políticas TTL de Firestore (7 días sesión, 180 días consultas frecuentes).
 
 La cuenta de servicio del backend tendrá:
 
@@ -395,6 +404,8 @@ La cuenta de servicio del backend tendrá:
 - Acceso a Vertex AI.
 - Sin permisos sobre Silver, Bronze o DLQ.
 - Sin permisos administrativos sobre infraestructura.
+
+Diego contará con un rol IAM adicional de solo lectura sobre Firestore, Cloud Logging y Cloud Monitoring del proyecto, usado para ejercer sus funciones administrativas directamente desde Cloud Console.
 
 ## 15. Presupuesto
 
@@ -420,6 +431,8 @@ Techo original:             $15.00/mes
 Techo aprobado Fase 2:      $20.00/mes
 ```
 
+Autorización del techo Fase 2: Diego (usuario principal), 2026-09-04.
+
 No se utilizarán:
 
 - Vertex AI Vector Search dedicado.
@@ -444,13 +457,15 @@ No se utilizarán:
 - Ninguna respuesta supera 3.000 tokens.
 - Ninguna consulta BigQuery supera 10 MB facturados.
 - Las consultas fuera de dominio son rechazadas.
-- El set de 20 preguntas doradas se ejecuta como regresión.
+- El set de 15 preguntas doradas y el set de seguridad de 10 preguntas se ejecutan como regresión.
 - El costo incremental esperado permanece debajo de `$5/mes`.
 
 ## 17. Roadmap
 
 ### MVP técnico
 
+- Validar disponibilidad de IAP nativo de Cloud Run en us-central1 (spike técnico).
+- Configurar políticas TTL de Firestore para memoria de sesión y consultas frecuentes.
 - Crear `gold_rag_corpus`.
 - Implementar servicio FastAPI.
 - Integrar Google ADK.
@@ -464,7 +479,7 @@ No se utilizarán:
 
 ### Validación
 
-- Crear las 20 preguntas doradas.
+- Crear las 15 preguntas doradas y el set de seguridad de 10 preguntas.
 - Ejecutar pruebas funcionales.
 - Ejecutar pruebas de seguridad.
 - Ejecutar pruebas de cuota y tokens.
