@@ -96,9 +96,27 @@ produce un error: produce una respuesta vacía que el agente reporta como "no ha
 datos". Ver el test `test_compare_channels_recibe_la_lista` en
 `tests/test_rag_tools.py`.
 
+## Todo resultado lleva `evidence_level` y `sample_sizes`
+
+La escala vivía solo en [[rag-tool-trend-detection]], pero el problema es de esta herramienta por igual: Zedd tiene 6 comentarios y Martin Garrix 1,869. "100% positivo" sobre seis comentarios y "82% positivo" sobre mil ochocientos se leen idénticos y no valen lo mismo.
+
+Los umbrales son los mismos de siempre (`< 30` insufficient, `< 100` weak), ahora compartidos en `rag_agent/tools/evidence.py` para que las dos herramientas no puedan divergir.
+
+**Manda la muestra más pequeña**, no el total ni el promedio:
+
+| Plantilla | Sobre qué se mide |
+| :--- | :--- |
+| `compare_channels` | el canal con menos comentarios |
+| `evolution_over_time` | el mes con menos comentarios |
+| las demás | el total de filas del resultado |
+
+Una comparación vale lo que vale su lado más flaco: Martin Garrix (1,869) contra Zedd (6) devuelve `insufficient`, aunque un lado sea abundantísimo. `sample_sizes` acompaña siempre, para que la síntesis pueda decir sobre cuántos comentarios se calculó cada cifra en vez de solo advertir en abstracto.
+
 ## Invariantes
 
 - **Cada parámetro de una plantilla existe en el wrapper de ADK.** Si no, la plantilla devuelve vacío en silencio.
+- **Ningún porcentaje sin su `n`.** `evidence_level` y `sample_sizes` en toda salida.
+- **La evidencia la marca la muestra más pequeña**, no el total.
 
 - **Cero SQL libre.** El texto del usuario nunca llega a formar parte de una consulta, ni siquiera "sanitizado".
 - **Catálogo cerrado.** Agregar una plantilla es un cambio de código revisado, con su prueba en [[rag-evaluation-suite]] — no algo que el agente pueda hacer en tiempo de ejecución.

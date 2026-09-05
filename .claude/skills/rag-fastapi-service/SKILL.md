@@ -70,6 +70,10 @@ Devuelve lo que la pantalla inicial necesita: el nombre para el saludo, la descr
 
 Si la consulta del catálogo falla, la bienvenida se degrada a no listar DJs en vez de no cargar. El saludo es accesorio; la capacidad de preguntar, no.
 
+**El aviso de cobertura es parte del contrato con el usuario, no un disclaimer legal.** `/welcome` devuelve `aviso_cobertura`: cuántos comentarios hay, en qué ventana, de qué canales sobra material y de cuáles hay poco — con el mismo umbral (`WEAK_BELOW`) que las herramientas usan para marcar la evidencia como débil, para que la bienvenida y las advertencias de las respuestas digan lo mismo.
+
+Que el usuario sepa el sesgo **antes** de preguntar cambia cómo lee cualquier comparación. Sin eso, "Zedd es 100% positivo" y "Martin Garrix es 82% positivo" se leen como cifras equivalentes, y una está calculada sobre seis comentarios. Es más barato y más honesto decirlo una vez en la bienvenida que confiar en que cada respuesta lo recuerde.
+
 ## Identidad para mostrar vs. identidad para indexar
 
 `authenticate_identity()` devuelve `(sub, email)`. El **`sub` es la clave de todo**: cuota diaria, historial, caché. El email se usa **solo para mostrar** el nombre en el saludo.

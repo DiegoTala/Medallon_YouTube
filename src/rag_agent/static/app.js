@@ -114,6 +114,9 @@
                 <p class="cap-heading"><strong>Qué puedes preguntarme</strong></p>
                 <ul class="capabilities">${ejemplos}</ul>
                 ${djs}
+                ${d.aviso_cobertura
+                    ? `<p class="coverage">${escapeHtml(d.aviso_cobertura)}</p>`
+                    : ''}
                 <p class="quota-note">${d.cuota.limite === null
                     ? 'Tu cuenta no tiene límite diario de consultas.'
                     : `Tienes ${d.cuota.limite} consultas al día.`}</p>`;

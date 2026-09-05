@@ -4,6 +4,7 @@ Ver .claude/skills/rag-tool-sentiment-analytics/SKILL.md.
 - Cero SQL libre: el texto del usuario nunca forma parte de una consulta
 - Solo plantillas parametrizadas
 - maximum_bytes_billed = 10 MB
+- Todo resultado lleva evidence_level y sample_sizes
 - Lee exclusivamente de gold_rag_corpus
 """
 
@@ -12,6 +13,8 @@ from __future__ import annotations
 from typing import Final
 
 from google.cloud import bigquery
+
+from rag_agent.tools.evidence import evidence_level
 
 MAX_BYTES_BILLED = 10 * 1024 * 1024  # 10 MB
 
@@ -116,6 +119,52 @@ def sentiment_analytics(
     try:
         results = client.query(sql, job_config=job_config).result()
         rows = [dict(row) for row in results]
-        return {"status": "success", "query_type": query_type, "results": rows, "count": len(rows)}
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
+
+    return {
+        "status": "success",
+        "query_type": query_type,
+        "results": rows,
+        "count": len(rows),
+        **_evidencia(query_type, rows),
+    }
+
+
+def _evidencia(query_type: str, rows: list[dict]) -> dict:
+    """Tamaños de muestra y nivel de evidencia de un resultado agregado.
+
+    Un porcentaje sin su n es una cifra sin significado: "84.4% positivo" sobre
+    90 comentarios y sobre 6 se leen igual y no valen lo mismo. Ver
+    rag_agent.tools.evidence.
+    """
+    if not rows:
+        return {"evidence_level": "insufficient", "sample_sizes": {}}
+
+    if query_type == "compare_channels":
+        # El nivel lo marca el canal con menos datos: una comparación vale lo
+        # que vale su lado más flaco.
+        por_canal: dict[str, int] = {}
+        for r in rows:
+            canal = r.get("channel_name")
+            if canal is not None:
+                por_canal[canal] = por_canal.get(canal, 0) + int(r.get("n") or 0)
+        return {
+            "evidence_level": evidence_level(*por_canal.values()),
+            "sample_sizes": por_canal,
+        }
+
+    if query_type == "evolution_over_time":
+        # Cada mes es una observación independiente; el mes más flaco manda.
+        por_mes: dict[str, int] = {}
+        for r in rows:
+            mes = r.get("month")
+            if mes is not None:
+                por_mes[mes] = por_mes.get(mes, 0) + int(r.get("n") or 0)
+        return {
+            "evidence_level": evidence_level(*por_mes.values()),
+            "sample_sizes": por_mes,
+        }
+
+    total = sum(int(r.get("n") or 0) for r in rows)
+    return {"evidence_level": evidence_level(total), "sample_sizes": {"total": total}}

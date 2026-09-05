@@ -212,3 +212,49 @@ def test_toda_plantilla_tiene_sus_parametros_en_el_wrapper():
         usados |= set(re.findall(r"@(\w+)", sql))
 
     assert usados <= expuestos, f"parámetros sin exponer: {usados - expuestos}"
+
+
+# ── umbral de relevancia ─────────────────────────────────────────────────
+
+def _fila(distance, cid="Ugx_test_1234567890"):
+    return {"comment_id": cid, "comment_text": "...", "distance": distance}
+
+
+def test_descarta_los_resultados_lejanos():
+    """VECTOR_SEARCH siempre devuelve top_k, tenga o no que ver: preguntar por
+    un DJ ausente devolvía 5 comentarios de otro y el modelo los 'rescataba'."""
+    from unittest.mock import MagicMock
+
+    from rag_agent.tools.semantic_search import MAX_DISTANCE, semantic_search
+
+    client = MagicMock()
+    client.query.return_value.result.return_value = [
+        _fila(0.22), _fila(0.30), _fila(0.50), _fila(0.55),
+    ]
+    r = semantic_search(client, "proj", "gold", "consulta")
+    assert r["count"] == 2
+    assert r["descartados_por_relevancia"] == 2
+    assert all(x["distance"] <= MAX_DISTANCE for x in r["results"])
+
+
+def test_cero_relevantes_no_es_cero_resultados():
+    """La distinción que necesita la síntesis: hay comentarios, pero ninguno
+    habla de lo que se preguntó."""
+    from unittest.mock import MagicMock
+
+    from rag_agent.tools.semantic_search import semantic_search
+
+    client = MagicMock()
+    client.query.return_value.result.return_value = [_fila(0.49), _fila(0.52)]
+    r = semantic_search(client, "proj", "gold", "drops de Fisher")
+    assert r["status"] == "success"
+    assert r["count"] == 0
+    assert r["descartados_por_relevancia"] == 2
+
+
+def test_el_umbral_cae_en_el_hueco_medido():
+    """Calibrado el 2026-09-05: lo relevante llegó a 0.307 como máximo, lo
+    irrelevante empezó en 0.379."""
+    from rag_agent.tools.semantic_search import MAX_DISTANCE
+
+    assert 0.31 < MAX_DISTANCE < 0.38

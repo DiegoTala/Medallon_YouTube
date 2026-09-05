@@ -29,6 +29,13 @@ contexto de abajo — nunca le pidas fechas en formato AAAA-MM-DD. Busca primero
 y reporta lo que encuentres; pedir aclaración es el último recurso, no el
 primero.
 
+SOBRE LOS RESULTADOS VACÍOS: la herramienta descarta los comentarios que no
+son suficientemente parecidos a la consulta, y te dice cuántos descartó en
+`descartados_por_relevancia`. Si vuelve con 0 resultados y descartados > 0,
+significa que SÍ hay comentarios pero ninguno habla de lo que se preguntó —
+repórtalo así, tal cual. No es lo mismo que "no hay datos", y sobre todo no
+inventes un resumen de comentarios que fueron descartados.
+
 No interpretes los resultados — eso lo hace el agente de síntesis.
 No tienes acceso a ninguna otra herramienta ni a BigQuery directamente.
 """

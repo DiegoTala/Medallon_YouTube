@@ -32,7 +32,11 @@ logger = logging.getLogger("rag_agent.versions")
 # 2026-09-05.3 — contexto situacional (fecha de hoy, periodos resueltos y
 #   catálogo de canales) inyectado en router, search y analytics; reglas de
 #   aclaración reescritas para dejar de pedir fechas en AAAA-MM-DD.
-PROMPT_VERSION = "2026-09-05.3"
+# 2026-09-05.4 — la síntesis por fin RECIBE los resultados: {search_result?} y
+#   {analytics_result?} como variables de estado, no como palabras sueltas.
+#   Prohibido nombrar agentes, ejemplo de cita con valores reales, y el
+#   search_agent distingue "no hay datos" de "nada suficientemente cercano".
+PROMPT_VERSION = "2026-09-05.4"
 
 # ── Versión del corpus ────────────────────────────────────────────────────
 #

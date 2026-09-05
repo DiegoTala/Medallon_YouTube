@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from google.cloud import bigquery
 
+from rag_agent.tools.evidence import evidence_level
+
 MAX_BYTES_BILLED = 10 * 1024 * 1024  # 10 MB
 
 VALID_METRICS = {"positive_ratio", "negative_ratio", "comment_volume", "avg_likes"}
@@ -40,12 +42,12 @@ WHERE (@channel_name IS NULL OR channel_name = @channel_name)
 
 
 def _evidence_level(n_current: int, n_baseline: int) -> str:
-    """Clasifica el nivel de evidencia según los tamaños de muestra."""
-    if n_current < 30 or n_baseline < 30:
-        return "insufficient"
-    if n_current < 100 or n_baseline < 100:
-        return "weak"
-    return "solid"
+    """Clasifica el nivel de evidencia según los tamaños de muestra.
+
+    Delega en la escala compartida (rag_agent.tools.evidence) para que
+    sentiment_analytics use exactamente los mismos umbrales.
+    """
+    return evidence_level(n_current, n_baseline)
 
 
 def _get_metric_values(row: dict, metric: str) -> tuple[float | None, float | None]:

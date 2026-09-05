@@ -101,7 +101,31 @@ Al 2026-09-04 el corpus está por debajo de las 5,000 filas que BigQuery exige p
 
 Lo que sí tiene consecuencia es el costo por consulta: exhaustivo significa leer la columna `text_embedding` completa, **~20.9 MB medidos** el 2026-09-05. Por eso esta herramienta —y solo esta— usa `maximum_bytes_billed = 50 MB` en vez de los 10 MB generales. La justificación completa y el criterio para revisarlo están en [[rag-quota-limits]]. Los filtros del `WHERE` no reducen el escaneo: se aplican después de `VECTOR_SEARCH`, no antes.
 
+## `VECTOR_SEARCH` siempre devuelve `top_k`, sea relevante o no
+
+Este es el mayor generador de malas respuestas con un corpus pequeño. La búsqueda vectorial no tiene noción de "no encontré nada": devuelve los `top_k` vecinos **menos lejanos**, aunque estén lejísimos. Preguntar por un DJ que no está en el corpus devolvía cinco comentarios de otro DJ, y al modelo le tocaba rescatar una recuperación mala — de ahí las respuestas evasivas del tipo *"hay admiración general, pero no menciones específicas"*.
+
+Por eso hay un corte de distancia, `MAX_DISTANCE` (0.35 por defecto, configurable por `SEARCH_MAX_DISTANCE`). Calibrado el 2026-09-05 con seis consultas reales:
+
+| Consulta | Naturaleza | Distancias |
+| :--- | :--- | ---: |
+| "el mejor set en vivo" | en corpus | 0.178 – 0.307 |
+| "drops de Martin Garrix" | en corpus | 0.224 – 0.280 |
+| "los sets de Tiesto" | DJ ausente | 0.379 – 0.411 |
+| "recetas de cocina italiana" | fuera de dominio | 0.422 – 0.553 |
+| "drops de Fisher" | DJ ausente | 0.496 – 0.526 |
+| "cómo declarar impuestos" | fuera de dominio | 0.509 – 0.575 |
+
+Hueco limpio entre **0.31 y 0.38**. El corte en 0.35 deja pasar todo lo relevante medido y descarta todo lo irrelevante medido.
+
+**"Cero relevantes" no es "cero resultados".** La herramienta devuelve además `descartados_por_relevancia`, y el `search_agent` tiene instrucción de distinguirlos: que existan comentarios pero ninguno hable del tema es una respuesta distinta —y más útil— que no tener datos.
+
+Dos advertencias sobre el número: es una **calibración con seis consultas, no una validación**, y por eso es configurable y se registra en el log cuando descarta todo, para ajustarlo con casos reales. Y las distancias **no son comparables entre modelos de embedding**: si el corpus se regenera con otro modelo, este umbral hay que recalibrarlo, no heredarlo.
+
 ## Invariantes
+
+- **Se filtra por distancia**, porque `VECTOR_SEARCH` nunca devuelve vacío por sí solo.
+- **El umbral se recalibra al cambiar el modelo de embedding.**
 
 - **`top_k ≤ 20`, aplicado en código** con `min()`, no solo documentado ni delegado al prompt. El modelo puede pedir 500; la función devuelve 20.
 - **Cero interpolación de strings en el SQL:** todo entra por `ScalarQueryParameter`. Un `f-string` con `channel_name` aquí es una inyección SQL con las credenciales de lectura de Gold.

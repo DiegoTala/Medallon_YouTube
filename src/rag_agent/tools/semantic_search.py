@@ -9,9 +9,42 @@ Ver .claude/skills/rag-tool-semantic-search/SKILL.md.
 
 from __future__ import annotations
 
+import logging
+import os
+
 from google.cloud import bigquery
 
+logger = logging.getLogger("rag_agent.semantic_search")
+
 MAX_TOP_K = 20
+
+# ── Umbral de relevancia ──────────────────────────────────────────────────
+#
+# VECTOR_SEARCH SIEMPRE devuelve top_k filas, tengan o no que ver con la
+# consulta. Con un corpus de 3,261 comentarios eso es la principal fuente de
+# malas respuestas: preguntar por un DJ que no está devuelve los 5 comentarios
+# "menos lejanos", y el modelo tiene que rescatar una recuperación mala —
+# de ahí salen las respuestas evasivas del tipo "hay admiración general, pero
+# no menciones específicas".
+#
+# Calibrado el 2026-09-05 con seis consultas reales contra el corpus:
+#
+#   drops de Martin Garrix      (en corpus)     0.224 – 0.280
+#   el mejor set en vivo        (en corpus)     0.178 – 0.307
+#   los sets de Tiesto          (DJ ausente)    0.379 – 0.411
+#   recetas de cocina italiana  (fuera dominio) 0.422 – 0.553
+#   drops de Fisher             (DJ ausente)    0.496 – 0.526
+#   declarar impuestos          (fuera dominio) 0.509 – 0.575
+#
+# Hueco limpio entre 0.31 y 0.38. El corte va en 0.35: deja pasar todo lo
+# relevante medido y descarta todo lo irrelevante medido.
+#
+# Es una calibración con seis consultas, no una validación: el número es
+# configurable y cuando el filtro descarta TODO se registra en el log, para
+# poder ajustarlo con casos reales en vez de con intuición. Al regenerar el
+# corpus con otro modelo de embedding, recalibrar — las distancias no son
+# comparables entre modelos.
+MAX_DISTANCE = float(os.environ.get("SEARCH_MAX_DISTANCE", "0.35"))
 # Excepción al tope general de 10 MB de rag-quota-limits.
 #
 # VECTOR_SEARCH en modo exhaustivo (el corpus está por debajo de las 5,000 filas
@@ -110,6 +143,25 @@ def semantic_search(
     try:
         results = client.query(sql, job_config=job_config).result()
         rows = [dict(row) for row in results]
-        return {"status": "success", "results": rows, "count": len(rows)}
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
+
+    # Filtro de relevancia: convierte "cinco coincidencias flojas" en "no hay
+    # datos", que es la respuesta honesta y la que el agente sabe dar bien.
+    relevantes = [r for r in rows if r.get("distance") is not None
+                  and r["distance"] <= MAX_DISTANCE]
+
+    if rows and not relevantes:
+        logger.info(
+            "Todos los resultados sobre el umbral %.2f (mejor: %.4f) para: %r",
+            MAX_DISTANCE, min(r["distance"] for r in rows), query[:80],
+        )
+
+    return {
+        "status": "success",
+        "results": relevantes,
+        "count": len(relevantes),
+        # Para que la síntesis pueda decir "no hay nada suficientemente
+        # cercano" en vez de "no hay nada": son cosas distintas.
+        "descartados_por_relevancia": len(rows) - len(relevantes),
+    }

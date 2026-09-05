@@ -65,7 +65,9 @@ El TTL de 7 días es un piso de higiene: la clave ya invalida por versión, pero
 
 - Respuestas rechazadas por [[rag-security-guardrails]] — el rechazo es barato y cachearlo sirve texto hostil desde Firestore.
 - Errores de herramienta. Un `status: "error"` transitorio de BigQuery no debe volverse la respuesta permanente a esa pregunta.
-- Respuestas con `evidence_level: "insufficient"` de [[rag-tool-trend-detection]] cuando el corpus está creciendo: la siguiente corrida del pipeline puede cambiar la conclusión. La versión del corpus ya lo cubre, pero conviene tenerlo presente.
+- **Respuestas con `evidence_level` `insufficient` o `weak`**, vengan de [[rag-tool-trend-detection]] o de [[rag-tool-sentiment-analytics]]. Aplicado en código por `es_cacheable()`, no solo documentado aquí.
+
+  La versión del corpus **no** alcanza para esto. Invalida cuando el corpus cambia, pero el punto es otro: una conclusión sostenida por seis comentarios era frágil desde el principio, y congelarla siete días la convierte en la respuesta permanente a esa pregunta. Con un corpus que crece semana a semana, es la diferencia entre un caché que ahorra dinero y uno que fija un error.
 
 ## Invariantes
 
@@ -74,6 +76,7 @@ El TTL de 7 días es un piso de higiene: la clave ya invalida por versión, pero
 - **La versión del corpus se lee del corpus**, nunca se hardcodea.
 - **Personalizada ⇒ particionada por `user_id`.**
 - **Un hit de caché igual cuenta** para la cuota diaria de [[rag-quota-limits]] y para el registro de [[rag-memory-common-queries]].
+- **No se cachea lo que la evidencia no sostiene**, ni los errores de herramienta.
 - **Caché exacto, no semántico.** Aproximar la coincidencia es cambiar la respuesta a la pregunta.
 
 ## Relación con otros skills

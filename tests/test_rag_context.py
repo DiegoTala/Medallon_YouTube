@@ -4,6 +4,7 @@ Existe porque el agente pedía fechas en formato AAAA-MM-DD para responder
 "el último mes": un LLM no tiene reloj, y sin la fecha de hoy en el prompt
 preguntar era su única salida correcta.
 """
+import asyncio
 from datetime import date
 from unittest.mock import MagicMock
 
@@ -84,19 +85,38 @@ def test_si_bigquery_falla_se_conserva_la_fecha():
 
 
 # ── composición de la instrucción ────────────────────────────────────────
+#
+# El provider es async y llama a inject_session_state, porque ADK desactiva la
+# sustitución de {variables} cuando la instrucción es un callable. Ver
+# rag_agent/agents/_instruction.py.
+#
+# Se usa asyncio.run() en vez de pytest-asyncio para no agregar una dependencia
+# ni tocar uv.lock, que el Dockerfile consume con `uv sync --frozen`.
+
+
+class _CtxFalso:
+    """ReadonlyContext mínimo, suficiente para inject_session_state."""
+
+    def __init__(self, state=None):
+        self._invocation_context = MagicMock()
+        self._invocation_context.session.state = state or {}
+
 
 def test_sin_provider_la_instruccion_es_el_string():
+    """Un str se devuelve sin envolver: ADK ya le inyecta el estado, y
+    envolverlo sería desactivar esa inyección para nada."""
     assert with_context("BASE", None) == "BASE"
 
 
 def test_con_provider_es_un_callable_que_compone():
     instr = with_context("BASE", lambda: "CONTEXTO")
     assert callable(instr)
-    assert instr(None) == "BASE\n\nCONTEXTO"
+    assert asyncio.run(instr(_CtxFalso())) == "BASE\n\nCONTEXTO"
 
 
 def test_contexto_vacio_no_ensucia_la_instruccion():
-    assert with_context("BASE", lambda: "")(None) == "BASE"
+    instr = with_context("BASE", lambda: "")
+    assert asyncio.run(instr(_CtxFalso())) == "BASE"
 
 
 def test_el_contexto_se_recalcula_en_cada_llamada():
@@ -104,5 +124,14 @@ def test_el_contexto_se_recalcula_en_cada_llamada():
     Una fecha horneada al arranque estaría mal al día siguiente."""
     valores = iter(["DIA 1", "DIA 2"])
     instr = with_context("BASE", lambda: next(valores))
-    assert instr(None) == "BASE\n\nDIA 1"
-    assert instr(None) == "BASE\n\nDIA 2"
+    assert asyncio.run(instr(_CtxFalso())) == "BASE\n\nDIA 1"
+    assert asyncio.run(instr(_CtxFalso())) == "BASE\n\nDIA 2"
+
+
+def test_el_provider_sigue_inyectando_estado():
+    """La razón de ser del async: envolver la instrucción en un callable
+    desactiva la sustitución de {variables} de ADK, y hay que restituirla a
+    mano. Sin esto, agregar la fecha rompería {search_result} en silencio."""
+    instr = with_context("Datos: {mi_var}", lambda: "CONTEXTO")
+    resultado = asyncio.run(instr(_CtxFalso({"mi_var": "VALOR REAL"})))
+    assert resultado == "Datos: VALOR REAL\n\nCONTEXTO"

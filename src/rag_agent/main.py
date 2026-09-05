@@ -35,6 +35,7 @@ from rag_agent.middleware.cache import get_cached_response, store_response
 from rag_agent.middleware.citations import (
     MENSAJE_DEGRADADO,
     collect_tool_payloads,
+    es_cacheable,
     tools_used,
     validate_citations,
 )
@@ -48,6 +49,7 @@ from rag_agent.middleware.quota import (
 )
 from rag_agent.middleware.sanitize import sanitize
 from rag_agent.catalog import get_available_channels
+from rag_agent.tools.evidence import WEAK_BELOW
 from rag_agent.memory.common_queries import record_query
 from rag_agent.memory.session import create_session, get_recent_sessions, load_session_messages, save_message
 from rag_agent.versions import PROMPT_VERSION, get_corpus_version
@@ -111,6 +113,56 @@ DESCRIPCION = (
     "datos, te lo digo."
 )
 
+# Umbral para decir "tengo poco de este canal". Es el mismo con el que las
+# herramientas marcan la evidencia como débil, así que el aviso de la
+# bienvenida y las advertencias de las respuestas dicen lo mismo.
+POCOS_COMENTARIOS = WEAK_BELOW
+
+
+def _aviso_de_cobertura(canales: list[dict]) -> str:
+    """Aviso honesto de MVP: cuánto hay, de qué sobra y de qué falta.
+
+    Que el usuario sepa el sesgo ANTES de preguntar cambia cómo lee cualquier
+    comparación. Sin esto, "Zedd es 100% positivo" y "Martin Garrix es 82%
+    positivo" se leen como cifras equivalentes, y una está calculada sobre
+    seis comentarios.
+    """
+    if not canales:
+        return (
+            "Soy un MVP y ahora mismo no tengo comentarios cargados, así que "
+            "no voy a poder responder gran cosa todavía."
+        )
+
+    total = sum(c["n_comments"] for c in canales)
+    desde = min(c["desde"] for c in canales)
+    hasta = max(c["hasta"] for c in canales)
+
+    abundantes = [c for c in canales if c["n_comments"] >= POCOS_COMENTARIOS]
+    escasos = [c for c in canales if c["n_comments"] < POCOS_COMENTARIOS]
+
+    partes = [
+        f"Ojo, soy un MVP: mi base de conocimiento todavía es chica — "
+        f"{total:,} comentarios de {len(canales)} canales, publicados entre el "
+        f"{desde} y el {hasta}."
+    ]
+    if abundantes:
+        partes.append(
+            "Donde tengo bastante material: "
+            + ", ".join(f"{c['channel_name']} ({c['n_comments']})" for c in abundantes)
+            + "."
+        )
+    if escasos:
+        partes.append(
+            "Donde tengo poco, y por eso cualquier conclusión ahí es frágil: "
+            + ", ".join(f"{c['channel_name']} ({c['n_comments']})" for c in escasos)
+            + "."
+        )
+    partes.append(
+        "Cuando una respuesta se apoye en pocos datos te lo voy a decir, en "
+        "vez de presentarla como si fuera sólida."
+    )
+    return " ".join(partes)
+
 
 @app.get("/welcome")
 async def welcome(request: Request) -> JSONResponse:
@@ -129,6 +181,7 @@ async def welcome(request: Request) -> JSONResponse:
     return JSONResponse(content={
         "nombre": display_name(email),
         "descripcion": DESCRIPCION,
+        "aviso_cobertura": _aviso_de_cobertura(canales),
         "capacidades": CAPACIDADES,
         # Solo los canales CON comentarios: los 10 configurados en Fase 1 no
         # son los que se pueden responder.
@@ -314,8 +367,10 @@ async def chat(request: Request) -> JSONResponse:
             tools_used=herramientas, citations=citations,
         )
 
-        # Guardar en caché (solo si sabemos contra qué versión del corpus)
-        if cache_enabled:
+        # Guardar en caché: solo si sabemos contra qué versión del corpus, y
+        # solo si la evidencia sostiene la respuesta. Una conclusión basada en
+        # 6 comentarios no debe volverse la respuesta permanente a esa pregunta.
+        if cache_enabled and es_cacheable(tool_payloads):
             store_response(
                 db, query, {}, "es",
                 corpus_version, PROMPT_VERSION, MODEL,

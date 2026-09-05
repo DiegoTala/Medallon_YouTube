@@ -402,3 +402,70 @@ describe la ruta de consola.
 **Documentación:** `docs/PRD.md`, `docs/HANDOFF.md`, `docs/REPORTE-EJECUTIVO-2026-08-02.md` y los skills `bronze-ingestion-videos` y `docs-maintenance` pasaron de "5 canales" a los 10 reales de `infra/terraform.tfvars` (los cinco últimos se agregaron el 2026-08-30). `rag-fastapi-service` documenta el endpoint nuevo, que está fuera de la cuota, y la distinción entre identidad que se muestra e identidad que indexa.
 
 **Tests:** 139 pasan (eran 126).
+
+## 2026-09-05T15:35:00-06:00 — rag-deploy-service — fase2-topologia-memoria-y-cuota-sin-tope
+
+- **Recurso(s):** `google_cloud_run_v2_service.rag_chat` — imagen `33c819c` → `97f48bb`, más dos variables de entorno nuevas: `QUOTA_OVERRIDES` y `GLOBAL_DAILY_LIMIT`.
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=97f48bb` (build `60bf961b`, 42s, digest `sha256:620b0593b7af12f2b896ea0994f67794deb114d64d616552134d010d7e981260`), luego `terraform -chdir=infra/fase2 apply tfplan_agentes`. Ambos ejecutados por Diego.
+- **Costo estimado incremental:** +$0.00 USD/mes en régimen normal. **Ver la nota de riesgo abajo**: este cambio quita el tope diario a una identidad.
+- **Costo total estimado tras el cambio:** ~$3.19 – $6.69 / $20.00 USD
+- **Margen restante:** ~$13.31 (67% libre). Delta acumulado Fase 2: $1.34 – $4.84 / $5.00.
+- **¿Contiene datos / requirió backup?:** No — `0 added, 1 changed, 0 destroyed`.
+- **Aprobado por:** Diego (verbatim: "Me agrada tu plan, una cosa más aprovechando que harás cambios, hay manera de configurar mi usuario sin límites, para poder seguir probando hoy y no llegar al límite?" y, para ejecutar, "Listo")
+- **Ejecutado:** sí — `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Revisión `rag-chat-service-00009-8mc`, `Ready: True`, arranque sin warnings.
+
+### Cambio de guardrail: una identidad sin tope diario
+
+`QUOTA_OVERRIDES="diego@talamantes.com.mx=0"` — Diego queda sin límite diario para poder probar. Las demás identidades siguen en 30.
+
+Al implementarlo se encontró que **el circuito de protección agregado que `rag-quota-limits` especifica nunca se había implementado**. Sin él, quitar el tope habría dejado el sistema con cero protección de costo: solo el rate limit de 5/min, que en un bucle son 7,200 consultas diarias. Por eso el override viaja junto con el circuito, no después:
+
+- `GLOBAL_DAILY_LIMIT=300`, evaluado **antes** que la cuota por usuario, cuenta todas las consultas del día de todas las identidades y responde 503 al alcanzarlo.
+- El override vive en `cloud_run.tf`, **no en Firestore**: así aparece en el `plan`, pasa por este gate y queda aquí. Un override mutable desde la consola sin rastro no sería un guardrail.
+- **Sin tope no es sin medición:** el contador de Diego sigue incrementando. Es la única forma de ver qué cuesta la excepción.
+- Un override mal escrito (`=muchas`) cae al límite normal de 30, nunca a "sin tope". La dirección del fallo importa.
+
+**Lo que el circuito acota y lo que no:** un día completo contra el tope de 300 cuesta del orden de **$0.50 USD**. Eso protege contra un día malo. **No** protege contra 300 diarias sostenidas un mes — serían ~$15 y romperían el techo. Es un cortacircuitos, no un presupuesto. Si el consumo real se acerca al tope de forma habitual, la respuesta es recotizar con `cost-guardrail`, no subir el número.
+
+### Bug: una de las cinco plantillas era inalcanzable
+
+`compare_channels` filtra con `WHERE channel_name IN UNNEST(@channels)`, pero el wrapper de ADK **no exponía el parámetro `channels`**. Siempre llegaba `[]`, así que la plantilla devolvía **cero filas sin fallar nunca**: `status: "success"`, `count: 0`.
+
+Es la plantilla que responde la pregunta de ejemplo que se puso en la bienvenida el mismo día ("¿Cómo es el sentimiento de ILLENIUM comparado con Alesso?"). Verificado post-apply con la identidad del backend: ahora devuelve **8 filas** (Alesso 84.4% positivo, ILLENIUM 71.2%). Se agregó un test que recorre las cinco plantillas buscando `@parametros` y exige que existan en el wrapper.
+
+### El agente pedía fechas en formato AAAA-MM-DD
+
+Reportado por Diego: pedir "el sentimiento del último mes" devolvía *"Por favor, especifica las fechas en formato AAAA-MM-DD"*. Tres causas, ninguna era el modelo:
+
+1. **Un LLM no tiene reloj.** Sin la fecha de hoy en el prompt, "el último mes" es irresoluble y preguntar era su única salida correcta. Ahora `rag_agent/agents/context.py` inyecta, **por request**, la fecha actual, los periodos relativos ya resueltos, la cobertura real de los datos y los nombres exactos de los canales. Por request y no al construir el pipeline: una instancia de Cloud Run vive días y una fecha horneada al arranque estaría mal al día siguiente, en silencio.
+2. **La instrucción le ordenaba ser rígido:** `analytics_agent` decía literalmente *"si el usuario no especifica un canal o periodo, NO asumas — devuelve un error indicando qué parámetros faltan"*. Reescrita: una pregunta sin fechas no está incompleta, significa "sobre todo lo que haya".
+3. **La plantilla equivocada.** `compare_channels` y `distribution_by_channel` no necesitan fechas; el agente no lo sabía.
+
+Degradación en el orden correcto: si BigQuery falla se pierde el catálogo de canales pero **se conserva la fecha** — perder los canales hace que pregunte por el DJ; perder la fecha lo devolvería a pedir `AAAA-MM-DD`.
+
+### Topología: estaba documentada pero no implementada
+
+`orchestrator.py` importaba `ParallelAgent` y `SequentialAgent`, su docstring y `rag-agent-topology` describían el flujo, y **no se usaba ninguno de los dos**. El router tenía tres `AgentTool` sueltos y nada garantizaba que la síntesis corriera: podía responder él directamente, saltándose las reglas de citación y el tope de tokens. Es la explicación más probable de que el agente se sintiera "atontado" — no era el modelo, era el paso donde vivía la redacción.
+
+Ahora existe de verdad: `SequentialAgent(ParallelAgent(search, analytics), synthesis)`, expuesto como `AgentTool` del router, con reglas de delegación explícitas y una regla central — si algún agente recuperó datos, la respuesta la redacta `synthesis_agent`. `tests/test_rag_topology.py` lo verifica estructuralmente: un diagrama no falla cuando el código deja de corresponderle.
+
+**Nota de versión de ADK (2.8.0):** `SequentialAgent` y `ParallelAgent` emiten `DeprecationWarning` en favor de `Workflow`. **No se migró**: el propio aviso dice que *"Workflow cannot yet be used as an LlmAgent sub-agent"*, que es exactamente este caso. Registrado en `rag-agent-topology` con la condición para revisarlo.
+
+### `max_output_tokens` no estaba configurado
+
+El tope de 3.000 tokens del PRD §12 existía **solo como frase en el prompt** — no había un `generate_content_config` en todo el código. Los cinco agentes ahora lo llevan, con `temperature=0.2`.
+
+### Memoria: escrita pero no conectada
+
+`record_query()` se llamaba en cada consulta y `get_common_queries()` no la llamaba nadie; `preferences.py` completo sin un solo importador. El agente respondía, con razón, que no podía recordar nada — no tenía forma. Se verificó que la escritura sí funcionaba: 5 documentos en Firestore, incluida la propia pregunta que expuso el problema.
+
+`memory_agent` nuevo, con dos herramientas de **lectura**. El `user_id` sale de `tool_context.user_id` en tiempo de ejecución: capturarlo en el closure al construir el pipeline habría servido la memoria de un usuario a otro. La **escritura** de preferencias queda fuera — `rag-memory-preferences` exige confirmación explícita previa y ese flujo es una pieza aparte.
+
+### Versión del prompt
+
+`PROMPT_VERSION` de `2026-09-05.1` a `2026-09-05.3`. Cambiaron los prompts de todos los agentes; sin subirla, el caché habría seguido sirviendo respuestas redactadas sin pasar por síntesis.
+
+**Tests:** 180 pasan (eran 139).
+
+**Pendientes conocidos:** (1) el historial reusa siempre la misma sesión (`get_recent_sessions(..., limit=1)`), así que conversaciones de temas distintos se contaminan; (2) escritura de preferencias con confirmación; (3) F.2, la evaluación de 25 preguntas, sigue en espera.

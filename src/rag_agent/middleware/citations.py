@@ -130,3 +130,27 @@ def validate_citations(
 def tools_used(tool_payloads: Iterable[tuple[str, dict]]) -> list[str]:
     """Nombres de las herramientas que efectivamente corrieron."""
     return sorted({name for name, _ in tool_payloads if name})
+
+
+# ── Qué NO se cachea ──────────────────────────────────────────────────────
+
+EVIDENCIA_NO_CACHEABLE = frozenset({"insufficient", "weak"})
+
+
+def es_cacheable(tool_payloads: Iterable[tuple[str, dict]]) -> bool:
+    """False si alguna herramienta reportó evidencia insuficiente o débil.
+
+    Una conclusión sostenida por 6 comentarios puede cambiar por completo con
+    la corrida del pipeline del lunes. Congelarla 7 días en el caché la vuelve
+    la respuesta permanente a esa pregunta, y la versión del corpus no alcanza:
+    invalida cuando el corpus cambia, pero aquí el punto es que la respuesta era
+    frágil desde el principio.
+
+    Ver rag-response-cache, "Qué no se cachea".
+    """
+    for _name, payload in tool_payloads:
+        if payload.get("status") != "success":
+            return False
+        if payload.get("evidence_level") in EVIDENCIA_NO_CACHEABLE:
+            return False
+    return True
