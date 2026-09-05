@@ -28,10 +28,14 @@ La primera versión permitirá realizar búsquedas semánticas, consultar analí
 | Usuario | Identidad | Rol |
 |---|---|---|
 | Principal | `diego@talamantes.com.mx` | Administrador |
-| Prueba 1 | `medallon.rag.test01@gmail.com` | Analista |
-| Prueba 2 | `medallon.rag.test02@gmail.com` | Analista |
+| Prueba 1 | `medallon.rag.test01@talamantes.com.mx` | Analista |
+| Prueba 2 | `medallon.rag.test02@talamantes.com.mx` | Analista |
 
-Las dos cuentas Gmail deben crearse manualmente. IAP utilizará las cuentas Google existentes; no habrá usuarios ni contraseñas propias de la aplicación.
+> **Actualización (2026-09-04) — las cuentas de prueba cambian de `@gmail.com` al dominio.** La especificación original fijaba dos cuentas `@gmail.com`. Se verificó contra el proyecto real que la organización `talamantes.com.mx` (customer ID `C04fe1qyh`) aplica **Domain Restricted Sharing** — `constraints/iam.allowedPolicyMemberDomains` efectiva sobre `medallon-youtube` — lo que impide otorgar cualquier binding IAM a identidades fuera del directorio. Las cuentas Gmail eran inviables: no por IAP, sino por IAM, una capa más abajo.
+>
+> Se evaluaron tres alternativas para conservarlas (grupo del dominio con miembros externos, constraint `iam.managed.allowedPolicyMembers` con principals individuales, y relajar la política legada en el proyecto). Diego decidió el 2026-09-04 usar **identidades del propio dominio**, que no requiere excepción de política alguna y además elimina la necesidad de un cliente OAuth externo con su re-autenticación cada 7 días. Análisis completo y rutas descartadas: `.claude/skills/rag-iap-auth/SKILL.md`.
+
+Las dos cuentas del dominio deben crearse manualmente como usuarios de **Cloud Identity Free** (sin licencia de Google Workspace, costo $0 — ver §15). IAP utilizará las cuentas Google existentes; no habrá usuarios ni contraseñas propias de la aplicación.
 
 Las contraseñas:
 
@@ -323,7 +327,9 @@ Requisitos:
 
 El acceso a la aplicación no dependerá únicamente de headers no verificados. El backend validará la identidad recibida por IAP.
 
-Riesgo técnico a validar antes del MVP: confirmar disponibilidad de IAP nativo sobre Cloud Run (sin Load Balancer) en `us-central1` para el tipo de servicio a desplegar. Si no está disponible, esta sección requiere revisión antes de continuar, dado que el Load Balancer está fuera de alcance.
+> **Riesgo resuelto (2026-09-04).** Se confirmó contra la documentación oficial que **IAP nativo sobre Cloud Run sin Load Balancer existe, es la vía recomendada por Google y no tiene costo adicional**. Se habilita sobre el servicio, protege el endpoint `run.app` en todos los caminos de ingreso, y el acceso se otorga con `roles/iap.httpsResourceAccessor`. El backend verifica el header `x-goog-iap-jwt-assertion` con `audience` = `/projects/180406516352/locations/us-central1/services/{SERVICE_NAME}` y `certs_url=https://www.gstatic.com/iap/verify/public_key`. El Load Balancer sigue fuera de alcance y no hace falta.
+>
+> El riesgo real no era la disponibilidad de IAP sino la elegibilidad de las identidades — ver la actualización de §2. Con cuentas del dominio, IAP opera con el cliente OAuth administrado por Google y **no se requiere ningún paso manual de consola fuera de Terraform**.
 
 ## 12. Guardrails
 
@@ -433,6 +439,12 @@ Techo aprobado Fase 2:      $20.00/mes
 
 Autorización del techo Fase 2: Diego (usuario principal), 2026-09-04.
 
+### Identidades de los usuarios
+
+Las dos cuentas de prueba en `talamantes.com.mx` se crean como **Cloud Identity Free**: la edición gratuita provee 50 licencias de usuario por omisión, sin costo y con licenciamiento por sitio (no hay que asignar licencia; el usuario nuevo la recibe automáticamente). **Delta: $0.00 USD/mes.**
+
+Advertencia de costo, verificada 2026-09-04: si el dominio tiene activado el **aprovisionamiento automático de licencias**, un usuario nuevo recibe por omisión una licencia de **Google Workspace de pago**. Dos licencias de Workspace exceden por sí solas el techo de $20 USD/mes del proyecto completo. Desactivar esa opción, o asignar explícitamente Cloud Identity Free, antes de crear las cuentas.
+
 No se utilizarán:
 
 - Vertex AI Vector Search dedicado.
@@ -464,7 +476,8 @@ No se utilizarán:
 
 ### MVP técnico
 
-- Validar disponibilidad de IAP nativo de Cloud Run en us-central1 (spike técnico).
+- ~~Validar disponibilidad de IAP nativo de Cloud Run en us-central1 (spike técnico).~~ **Resuelto 2026-09-04** — ver §11.
+- Crear las dos identidades de prueba en el dominio `talamantes.com.mx` como usuarios de Cloud Identity Free (paso manual, previo a la allowlist de IAP).
 - Configurar políticas TTL de Firestore para memoria de sesión y consultas frecuentes.
 - Crear `gold_rag_corpus`.
 - Implementar servicio FastAPI.
@@ -505,4 +518,4 @@ La creación o modificación de recursos GCP se realizará únicamente mediante 
 - Aprobación explícita previa.
 - Registro de la aprobación en `infra/APPROVALS.md`.
 
-Las cuentas Gmail de prueba deberán crearse manualmente antes de configurar la allowlist de IAP.
+Las dos cuentas de prueba del dominio deberán crearse manualmente en la Consola de Administración antes de configurar la allowlist de IAP, **con licencia Cloud Identity Free y no Google Workspace**. Si el aprovisionamiento automático de licencias está activo en el dominio, cada usuario nuevo recibe una licencia de Workspace de pago por omisión — dos licencias superarían por sí solas el techo de $20 USD/mes de todo el proyecto. Verificar antes de crear.

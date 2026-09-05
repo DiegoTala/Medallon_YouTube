@@ -1,13 +1,13 @@
 ---
 name: docs-maintenance
-description: Cómo mantener docs/PRD.md, README.md y el resto de la documentación del proyecto sincronizados cuando cambia la arquitectura, el costo real observado o el alcance. Úsalo después de cualquier cambio de infraestructura, esquema o skill que haga que la documentación existente quede desactualizada.
+description: Cómo mantener docs/PRD.md, docs/PRD_Fase2.md, README.md y el resto de la documentación del proyecto sincronizados cuando cambia la arquitectura, el costo real observado o el alcance. Úsalo después de cualquier cambio de infraestructura, esquema o skill que haga que la documentación existente quede desactualizada.
 ---
 
 # docs-maintenance
 
 ## Alcance
 
-El PRD (`docs/PRD.md`) es la especificación original del sistema — no un changelog. Este skill define cuándo y cómo actualizar la documentación para que siga reflejando la realidad del sistema, sin convertir el PRD en un documento que cambia constantemente de forma descontrolada.
+Hay **dos PRD independientes**: `docs/PRD.md` (pipeline medallón, Fase 1) y `docs/PRD_Fase2.md` (agente RAG conversacional, Fase 2). Cada uno es la especificación de su fase — ninguno es un changelog, y **no se fusionan**: un cambio en el agente no edita el PRD de Fase 1, y viceversa. Lo único que ambos comparten es el techo de costo, cuya fuente de verdad es [[cost-guardrail]]. Este skill define cuándo y cómo actualizar la documentación para que siga reflejando la realidad del sistema, sin convertir el PRD en un documento que cambia constantemente de forma descontrolada.
 
 ## Qué se actualiza y cuándo
 
@@ -18,6 +18,10 @@ El PRD (`docs/PRD.md`) es la especificación original del sistema — no un chan
 | Se agrega/quita un skill del arnés | `CLAUDE.md` y `AGENTS.md` (tabla de skills) | Mantener la tabla de "cuándo usar qué skill" en sync con `.claude/skills/`. |
 | Se aprueba y ejecuta un cambio de infraestructura | `infra/APPROVALS.md` | Ya cubierto por [[approval-gate]] — este skill no duplica ese registro. |
 | Cambia el alcance del proyecto (ej. más de 5 canales) | `docs/PRD.md` §1/§2 | Requiere confirmación explícita del usuario antes de editar — el alcance no se autoactualiza. |
+| Cambia el contrato de `gold_rag_corpus` | `docs/PRD_Fase2.md` §8 **y** `docs/PRD.md` | Es la frontera entre fases: un cambio de esquema afecta a quien lo escribe y a quien lo lee. Ver [[gold-rag-corpus]]. |
+| Se activa la ruta de contingencia de autenticación | `docs/PRD_Fase2.md` §11 | Obligatorio **antes** de implementarla — es un cambio de arquitectura. Ver [[rag-iap-auth]]. |
+| Cambia una cuota, un límite o el techo de costo | `docs/PRD_Fase2.md` §12/§15 y [[cost-guardrail]] | El techo vive en `cost-guardrail`; el PRD registra la autorización y su fecha. |
+| Se ejecuta el set de evaluación antes de un release | `docs/` (reporte de la corrida) | Resultados de las 15 doradas y las 10 adversariales. Ver [[rag-evaluation-suite]]. |
 
 ## Qué NO se hace desde este skill
 
@@ -47,5 +51,6 @@ El PRD (`docs/PRD.md`) es la especificación original del sistema — no un chan
 
 ## Relación con otros skills
 
-- Se dispara después de cambios hechos por cualquiera de los otros 14 skills que alteren esquema, costo o alcance.
+- Se dispara después de cambios hechos por cualquiera de los otros 31 skills que alteren esquema, costo o alcance.
+- El techo de costo no se documenta aquí: su fuente de verdad es [[cost-guardrail]].
 - Nunca reemplaza el registro de [[approval-gate]] en `infra/APPROVALS.md`; es documentación complementaria, no redundante.

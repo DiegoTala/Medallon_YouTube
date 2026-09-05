@@ -46,6 +46,18 @@ bq extract --destination_format=NEWLINE_DELIMITED_JSON \
   gs://medallon-youtube-backups/pre-destroy/tabla_a_borrar_$(date +%Y%m%d).json
 ```
 
+## Salvaguarda adicional: verificar la raíz antes de destruir
+
+Existen **dos raíces de Terraform** con states separados: `infra/` (pipeline de Fase 1) e `infra/fase2/` (agente RAG). Antes de cualquier `destroy` o de remover un bloque de recurso:
+
+```bash
+terraform -chdir=<raíz> state list     # solo lectura: qué contiene ESTE state
+```
+
+Leer esa salida completa y confirmar que solo aparece lo que se pretende borrar. El aislamiento de states hace imposible que un destroy de Fase 2 alcance el pipeline productivo, pero **no** protege dentro de una misma raíz: un `destroy` sin `-target` en `infra/` borra el pipeline entero.
+
+Nunca se ejecuta un comando de destrucción sin `-chdir` explícito. Y la entrada `[DESTROY]` en `infra/APPROVALS.md` debe decir sobre cuál de las dos raíces se ejecutó.
+
 ## Invariantes
 
 - **Nunca `terraform destroy` sin `-target` salvo instrucción explícita** de decomisionar el ambiente completo — el default es destruir el recurso puntual solicitado, no todo el state.

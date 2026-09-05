@@ -12,15 +12,21 @@ Registro append-only de toda aprobación de cambios de infraestructura real (GCP
 Plantilla de entrada. Copiar y completar por cada apply/destroy aprobado.
 Para decomisiones (terraform-decommission), prefijar el título con [DESTROY].
 
-## <timestamp ISO 8601> — <skill: terraform-provision | terraform-decommission | deploy-release> — <nombre corto del cambio>
+## <timestamp ISO 8601> — <skill: terraform-provision | terraform-decommission | deploy-release | rag-terraform-root | rag-deploy-service | rag-iap-auth> — <nombre corto del cambio>
 
 - **Recurso(s):** <lista de recursos afectados>
-- **Comando:** <comando exacto ejecutado>
+- **Raíz Terraform:** <infra/ (Fase 1) | infra/fase2/ (Fase 2) | N/A si no es Terraform>
+- **Comando:** <comando exacto ejecutado, con -chdir explícito si es Terraform>
 - **Costo estimado incremental:** <+/-$X.XX USD/mes>
-- **Costo total estimado tras el cambio:** <$Y.YY / $15.00 USD>
+- **Costo total estimado tras el cambio:** <$Y.YY / $20.00 USD>
 - **¿Contiene datos / requirió backup?:** <sí/no, detalle si aplica — obligatorio para DESTROY>
 - **Aprobado por:** Diego (verbatim: "<texto exacto de la aprobación>")
 - **Ejecutado:** <sí/no — resultado, errores si los hubo>
+
+También se registran aquí los cambios **manuales** que alteran quién puede acceder al
+sistema o qué se factura, aunque no los ejecute Terraform (ej. alta de identidades,
+licencias, brands OAuth). En esos casos, "Raíz Terraform" va como N/A y el comando
+describe la ruta de consola.
 -->
 
 ## 2026-08-02T16:59:30-06:00 — terraform-provision — bootstrap-tfstate-bucket
@@ -173,3 +179,20 @@ Para decomisiones (terraform-decommission), prefijar el título con [DESTROY].
 - **¿Contiene datos / requirió backup?:** No.
 - **Aprobado por:** Diego (verbatim: "Después del terraform apply, corre el flujo completo una vez más para agregar comentarios de los nuevos canales a gcp")
 - **Ejecutado:** sí — `yt-ingestion-job-tmmhd`, exit(0), 3m13s. Datos nuevos: silver_videos 38→44 (+6), silver_comments 2837→3239 (+402), gold_sentiment 2837→3239 (+402), gold_embeddings 2837→3239 (+402). DLQ sin cambios (30).
+
+## 2026-09-04T21:42:57-06:00 — rag-iap-auth — alta-identidades-prueba-fase2
+
+- **Recurso(s):** dos identidades de Cloud Identity Free en el dominio `talamantes.com.mx`: `medallon.rag.test01@talamantes.com.mx` y `medallon.rag.test02@talamantes.com.mx`. Creadas dentro de una unidad organizativa dedicada, `RAG Test Users`, con el licenciamiento automático de Google Workspace desactivado para esa UO.
+- **Raíz Terraform:** N/A — cambio manual en la Consola de Administración de Google Workspace. No hay recurso de Terraform que represente identidades de Cloud Identity.
+- **Comando:** Consola de Administración → Facturación → Comprar o actualizar → Cloud Identity Free; Directorio → Unidades organizativas → crear `RAG Test Users`; Facturación → Configuración de licencias → UO `RAG Test Users` → Google Workspace Business Starter → licenciamiento automático desactivado; Directorio → Usuarios → alta de las dos cuentas dentro de esa UO.
+- **Costo estimado incremental:** $0.00 USD/mes. Cloud Identity Free provee 50 licencias de usuario sin costo, con licenciamiento por sitio. **Riesgo evitado:** con el licenciamiento automático activo, cada alta habría recibido una licencia de Google Workspace Business Starter de pago; dos licencias exceden por sí solas el techo del proyecto completo.
+- **Costo total estimado tras el cambio:** ~$1.85 / $20.00 USD (sin cambio — la infraestructura de Fase 2 aún no existe).
+- **¿Contiene datos / requirió backup?:** No — alta de identidades, no destrucción.
+- **Aprobado por:** Diego (verbatim: "Utilizaré la creación de dos usuarios, modifica lo que tengas que modificar con base a eso" + "Registra la creacion de las entidads, justo les pus el nombre que sugeriste").
+- **Ejecutado:** sí — las dos cuentas existen y quedaron con licencia Cloud Identity Free, sin licencia de Workspace.
+
+**Motivo del cambio respecto al PRD original.** El PRD Fase 2 §2 especificaba dos cuentas `@gmail.com`. Se verificó que la organización `talamantes.com.mx` (ID `712010469336`, customer ID `C04fe1qyh`) aplica **Domain Restricted Sharing** — `constraints/iam.allowedPolicyMemberDomains` con `allowedValues: [C04fe1qyh]`, efectiva sobre `medallon-youtube` — lo que impide otorgar cualquier binding IAM a identidades externas al directorio. Las cuentas Gmail eran inviables por IAM, no por IAP. Se evaluaron y descartaron tres alternativas para conservarlas (grupo del dominio con miembros externos, `iam.managed.allowedPolicyMembers` con principals individuales, y relajar la constraint legada en el proyecto); todas requerían además un cliente OAuth externo con re-autenticación cada 7 días. `docs/PRD_Fase2.md` §2, §11, §15, §17 y §18 quedaron actualizados con notas fechadas. Análisis completo y rutas descartadas: `.claude/skills/rag-iap-auth/SKILL.md`.
+
+**Tropiezos registrados** (documentados en el mismo skill para que no se repitan): (1) el primer intento de alta falló con *"Alcanzaste el límite de usuarios para Google Workspace Business Starter"* — no era un tope de usuarios del dominio sino de asientos de Workspace, porque la consola intentaba asignar una licencia de pago; (2) activar Cloud Identity Free no basta por sí solo, hay que desactivar el licenciamiento automático; (3) el ajuste vive en **Facturación → Configuración de licencias**, no en Suscripciones ni en Configuración de actualización de usuarios; (4) los usuarios deben crearse **dentro** de la UO con el licenciamiento apagado — crearlos en la raíz reproduce el error original.
+
+**Pendiente derivado:** los tres bindings de `roles/iap.httpsResourceAccessor` para estas identidades se declararán en `infra/fase2/` vía [`rag-terraform-root`](../.claude/skills/rag-terraform-root/SKILL.md) y requerirán su propio ciclo de aprobación.

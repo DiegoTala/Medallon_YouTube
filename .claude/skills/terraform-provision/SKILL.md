@@ -7,7 +7,11 @@ description: Convenciones para crear o actualizar recursos GCP declarativamente 
 
 ## Alcance
 
-Toda creación o actualización de recursos GCP reales se declara en Terraform bajo `infra/`. Este skill cubre el "crear/actualizar"; para borrar recursos ver [[terraform-decommission]] (skill separado, con salvaguardas adicionales).
+Toda creación o actualización de recursos GCP reales se declara en Terraform.
+
+> **Dos raíces de Terraform (desde 2026-09-04).** `infra/` es el pipeline medallón de Fase 1 (state `terraform/state`); `infra/fase2/` es el agente RAG de Fase 2 (state `terraform/fase2`, mismo bucket). Están aisladas a propósito: un `destroy` solo alcanza lo que está en su propio state. **Todo comando lleva `-chdir` explícito** — `terraform -chdir=infra plan` o `terraform -chdir=infra/fase2 plan` — y la entrada en `infra/APPROVALS.md` dice cuál se aplicó. Las convenciones de este skill valen para ambas; lo específico de Fase 2 está en [[rag-terraform-root]].
+
+Este skill cubre el "crear/actualizar". Para borrar recursos ver [[terraform-decommission]] (skill separado, con salvaguardas adicionales).
 
 ## Regla de oro
 
@@ -90,11 +94,11 @@ resource "google_storage_bucket" "bronze" {
 
 ## Flujo obligatorio antes de aplicar
 
-1. `terraform fmt` + `terraform validate`.
-2. `terraform plan -out=tfplan` y leer el diff completo (no solo el resumen).
+1. `terraform -chdir=<raíz> fmt` + `terraform -chdir=<raíz> validate`.
+2. `terraform -chdir=<raíz> plan -out=tfplan` y leer el diff completo (no solo el resumen). Confirmar que la raíz es la correcta **antes** de leer el plan: un plan que propone crear recursos que ya existen suele significar que se está en la raíz equivocada.
 3. Invocar [[cost-guardrail]] para cotizar el delta.
 4. Presentar plan + cotización al usuario vía [[approval-gate]] y esperar aprobación verbatim.
-5. Solo entonces `terraform apply tfplan`.
+5. Solo entonces `terraform -chdir=<raíz> apply tfplan`.
 6. Registrar en `infra/APPROVALS.md`.
 
 ## Invariantes
@@ -108,4 +112,5 @@ resource "google_storage_bucket" "bronze" {
 - Gateado siempre por [[approval-gate]].
 - Cotizado siempre por [[cost-guardrail]] antes de aplicar.
 - Complementario a [[terraform-decommission]] (nunca se mezclan create/destroy en el mismo plan sin dejarlo explícito en la revisión).
-- El repositorio de Artifact Registry que este skill crea es consumido por [[deploy-release]] para publicar imágenes.
+- El repositorio de Artifact Registry que este skill crea es consumido por [[deploy-release]] y por [[rag-deploy-service]] para publicar imágenes.
+- Para la raíz de Fase 2, sus `data` sources y su service account de mínimo privilegio: [[rag-terraform-root]].
