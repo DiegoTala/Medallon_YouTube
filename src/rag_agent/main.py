@@ -37,6 +37,7 @@ from rag_agent.middleware.citations import (
     MENSAJE_NUMEROS,
     collect_tool_payloads,
     es_cacheable,
+    payloads_from_state,
     render_inline_citations,
     tools_used,
     validate_citations,
@@ -338,6 +339,20 @@ async def chat(request: Request) -> JSONResponse:
                     for part in event.content.parts:
                         if part.text:
                             response_text += part.text
+
+        # La evidencia NO sale de los eventos del runner raíz: AgentTool corre
+        # cada sub-agente en su propio Runner y no reenvía sus
+        # function_responses (solo el texto final). Los payloads crudos viven
+        # en el estado de sesión, donde los escribió after_tool_callback y
+        # cuyo state_delta sí reenvía el AgentTool al estado del padre.
+        adk_session = await session_service.get_session(
+            app_name="rag_agent",
+            user_id=user_id,
+            session_id=adk_session.id,
+        )
+        payloads_estado = payloads_from_state(adk_session.state if adk_session else None)
+        if payloads_estado:
+            tool_payloads = payloads_estado
 
         # Validar que la respuesta no esté vacía
         if not response_text:

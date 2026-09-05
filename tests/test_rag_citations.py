@@ -140,6 +140,41 @@ def test_collect_tool_payloads_lee_function_response():
     ]
 
 
+# ── evidencia desde el estado de sesión ────────────────────────────────────
+
+def test_payloads_desde_estado_reunen_search_y_analytics():
+    """Los eventos del runner raíz no traen los payloads de los sub-agentes
+    (AgentTool los consume en su Runner anidado): la evidencia se lee del
+    estado de sesión, donde los escribió after_tool_callback."""
+    from rag_agent.middleware.citations import payloads_from_state
+
+    estado = {
+        "search_result": {"status": "success", "results": [{"comment_id": REAL}]},
+        "analytics_result": {
+            "sentiment_analytics": {"status": "success", "sample_sizes": {"total": 5}},
+            "trend_detection": {"status": "error", "error": "x"},
+        },
+    }
+    payloads = payloads_from_state(estado)
+    assert ("semantic_search", estado["search_result"]) in payloads
+    assert (
+        "sentiment_analytics",
+        estado["analytics_result"]["sentiment_analytics"],
+    ) in payloads
+    assert (
+        "trend_detection",
+        estado["analytics_result"]["trend_detection"],
+    ) in payloads
+
+
+def test_payloads_desde_estado_vacio():
+    from rag_agent.middleware.citations import payloads_from_state
+
+    assert payloads_from_state({}) == []
+    assert payloads_from_state(None) == []
+    assert payloads_from_state("no dict") == []
+
+
 def test_collect_tool_payloads_tolera_eventos_sin_contenido():
     assert collect_tool_payloads(SimpleNamespace(content=None)) == []
     assert collect_tool_payloads(SimpleNamespace()) == []

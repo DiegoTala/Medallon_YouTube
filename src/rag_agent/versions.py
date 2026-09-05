@@ -55,7 +55,12 @@ logger = logging.getLogger("rag_agent.versions")
 #   contenga un comment_id real (busca el token en la evidencia) y la
 #   validación corre sobre el texto normalizado. Invalida el caché: las
 #   respuestas cacheadas en .7 traen la etiqueta literal.
-PROMPT_VERSION = "2026-09-05.8"
+# 2026-09-05.9 — la evidencia se lee del ESTADO de sesión (payloads_from_state):
+#   los eventos del runner raíz nunca trajeron los payloads de los sub-agentes
+#   (AgentTool corre cada uno en su propio Runner), así que el índice de citas
+#   estuvo vacío desde el inicio — la causa de "citations: []" en producción.
+#   Invalida el caché: las respuestas cacheadas en .8 no se normalizaron.
+PROMPT_VERSION = "2026-09-05.9"
 
 # ── Versión del corpus ────────────────────────────────────────────────────
 #

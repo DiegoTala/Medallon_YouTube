@@ -47,6 +47,10 @@ def collect_tool_payloads(event: Any) -> list[tuple[str, dict]]:
 
     Defensivo a propósito: la forma de los eventos de ADK cambia entre
     versiones, y una respuesta sin validar es peor que una excepción aquí.
+
+    NOTA: esto NO ve los payloads de los sub-agentes. AgentTool corre cada
+    sub-agente en su propio Runner y no reenvía sus function_responses (solo
+    el texto final). La evidencia real se lee de payloads_from_state.
     """
     payloads: list[tuple[str, dict]] = []
     content = getattr(event, "content", None)
@@ -57,6 +61,31 @@ def collect_tool_payloads(event: Any) -> list[tuple[str, dict]]:
         response = getattr(fr, "response", None)
         if isinstance(response, dict):
             payloads.append((getattr(fr, "name", "") or "", response))
+    return payloads
+
+
+def payloads_from_state(state: Any) -> list[tuple[str, dict]]:
+    """Reúne los payloads crudos de las herramientas desde el estado de sesión.
+
+    Es la única vía fiable: los eventos del runner raíz no traen las
+    function_responses de los sub-agentes (AgentTool las consume en su Runner
+    anidado), pero su state_delta SÍ se reenvía al estado del padre. Ahí
+    dejaron su payload crudo los after_tool_callback de search y analytics.
+    """
+    payloads: list[tuple[str, dict]] = []
+    if not isinstance(state, dict):
+        return payloads
+
+    search = state.get("search_result")
+    if isinstance(search, dict):
+        payloads.append(("semantic_search", search))
+
+    analytics = state.get("analytics_result")
+    if isinstance(analytics, dict):
+        for nombre, payload in analytics.items():
+            if isinstance(payload, dict):
+                payloads.append((nombre, payload))
+
     return payloads
 
 
