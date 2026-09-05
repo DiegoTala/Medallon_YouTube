@@ -1,142 +1,167 @@
-# Reporte de Handoff — Fase 2 (RAG Agent) · 2026-09-05
+# Reporte de Handoff — Fase 2 (RAG Agent) · 2026-09-05 (actualizado)
 
-**Estado:** En progreso — Fase F (Despliegue y validación) casi completa.
-**Bloqueante actual:** 1 bug de IAM en la herramienta `semantic_search`.
-**Sesión:** Continuar desde este archivo. No re-ejecutar pasos ya completados.
-
----
-
-## Resumen ejecutivo
-
-El Cloud Run Service `rag-chat-service` está **desplegado y funcional**:
-- IAP habilitado, acceso validado con las 3 identidades (diego, test01, test02) + rechazo de una 4ta ✅
-- Pipeline de agentes ADK responde (HTTP 200) — Vertex AI configurado correctamente
-- Firestore conectado (`rag-memory`), índices compuestos creados
-- **PERO** la herramienta `semantic_search` falla con "acceso denegado a la base de datos" → bug de IAM identificado (falta `connectionUser` en la conexión Vertex para la SA de Fase 2)
+**Estado:** Fase F. Los dos bloqueantes de `semantic_search` están **arreglados, aplicados y verificados en GCP**.
+**Pendiente:** F.2 (evaluación de 25 preguntas), en espera — Diego prueba el servicio a mano primero.
+**Sesión:** continuar desde este archivo. No re-ejecutar pasos ya completados.
 
 ---
 
-## 1. BUG BLOQUEANTE — `semantic_search` 403 (el único bloqueante)
+## 0. LO PRIMERO — qué está desplegado
 
-### Síntoma
-Consulta real (`¿Qué opinan los usuarios sobre los drops de Fisher?`) → HTTP 200 pero la respuesta es:
-> "El agente de búsqueda ha informado de un error: ... parece que hay un error de acceso denegado. No tengo los permisos necesarios para acceder a la base de datos."
+Verificado con `gcloud` después del apply del 2026-09-05T14:30:
 
-### Causa raíz (verificada)
-`semantic_search` ejecuta `ML.GENERATE_EMBEDDING` (modelo remoto `gold.embedding_model`) a través de la **conexión BigQuery ↔ Vertex AI** `vertex-ai-connection`.
+| | Estado real en GCP |
+|:--|:--|
+| Revisión activa | `rag-chat-service-00007-874`, imagen `65036a4`, `Ready: True` |
+| `roles/bigquery.connectionUser` sobre `vertex-ai-connection` | `yt-ingestion-job` **y** `rag-backend-sa` ✅ |
+| Env vars del Service | `GCP_PROJECT`, `GCP_REGION`, `GOLD_DATASET` declaradas ✅ |
+| `semantic_search` | funciona — verificado impersonando a `rag-backend-sa` ✅ |
+| Aislamiento §8 (Bronze/Silver/DLQ) | 403 con la identidad del backend; `gold` 200 ✅ |
 
-La conexión solo tiene `roles/bigquery.connectionUser` para la SA de Fase 1:
-```json
-{"role": "roles/bigquery.connectionUser", "members": ["serviceAccount:yt-ingestion-job@medallon-youtube.iam.gserviceaccount.com"]}
+El apply fue `1 added, 1 changed, 0 destroyed`. Registro completo en `infra/APPROVALS.md`, entrada `2026-09-05T14:30:00-06:00`.
+
+**Commits:** `65036a4` (los fixes) y `60f212f` (bitácora, tfvars, limpieza). Sin push todavía.
+
+## 1. Los dos bloqueantes de `semantic_search` (causa raíz, ambos verificados)
+
+El handoff anterior documentaba solo el primero. El segundo habría hecho fallar la herramienta igual después de arreglar el IAM, con otro mensaje de error.
+
+### 1.1 IAM — falta `connectionUser` (403)
+
+`ML.GENERATE_EMBEDDING` sale a Vertex AI por la conexión `vertex-ai-connection`, que es un recurso **con su propio IAM**, distinto del dataset: `roles/bigquery.dataViewer` sobre `gold` no alcanza.
+
+Política real leída con la API:
 ```
-**Falta `rag-backend-sa@medallon-youtube.iam.gserviceaccount.com`** → la SA de Fase 2 no puede usar `ML.GENERATE_EMBEDDING` ni el modelo remoto.
-
-### Fix pendiente
-1. Agregar `roles/bigquery.connectionUser` sobre `us-central1.vertex-ai-connection` para `serviceAccount:rag-backend-sa@medallon-youtube.iam.gserviceaccount.com`.
-2. Declararlo en `infra/fase2/` (IAM de Fase 2 no toca recursos de Fase 1 → declarar como **data source** la conexión en `infra/fase2/main.tf` y el binding como `google_bigquery_connection_iam_member`, siguiendo el patrón de Fase 1 `infra/iam.tf`).
-3. `terraform -chdir=infra/fase2 plan` + approval-gate + apply + registro en `infra/APPROVALS.md`.
-
-> Nota histórica: Fase 1 tuvo exactamente este mismo gap (ver APPROVALS.md 2026-08-02T19:04:15). Se repite en Fase 2 porque la conexión es recurso compartido y Fase 2 no la posee.
-
-### Verificación post-fix
-```python
-# tests/rag_evaluation/_test_tool.py ya existe — ejecutar:
-wsl -d Ubuntu -- bash -c 'export GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token 2>/dev/null) && cd /home/diegotala42/Medallon_YouTube && .venv/bin/python tests/rag_evaluation/_test_tool.py'
-# Esperado: {"status": "success", "results": [...], "count": N}
+roles/bigquery.connectionUser → serviceAccount:yt-ingestion-job@medallon-youtube…
 ```
-Luego consulta real vía `run_eval.ask()` → debe devolver comentarios con citas.
+Falta `rag-backend-sa@medallon-youtube.iam.gserviceaccount.com`.
+
+**Fix:** `infra/fase2/bigquery_connection_iam.tf`. La conexión se referencia por su id (`var.vertex_connection_id`), nunca como `resource` — es de Fase 1 y un destroy de Fase 2 no debe poder alcanzarla. El provider no expone data source para conexiones de BigQuery, así que el acoplamiento es explícito vía variable.
+
+> Es el mismo gap que tuvo Fase 1 (`infra/iam.tf`, APPROVALS 2026-08-02T19:04:15). Se repite porque la conexión es compartida y Fase 2 la usa sin poseerla.
+
+### 1.2 `maximum_bytes_billed` — 10 MB rechazaba toda búsqueda semántica
+
+`gold_rag_corpus` pesa 21,026,121 bytes y **no hay índice vectorial** (3,261 filas < las 5,000 que exige BigQuery), así que `VECTOR_SEARCH` corre exhaustivo y lee la columna `text_embedding` completa.
+
+Medido con `bq query --dry_run` el 2026-09-05:
+
+| Herramienta | Escaneo real | Tope |
+|:--|--:|--:|
+| `semantic_search` | **20,856,549 B (19.9 MB)** | 50 MB ✅ |
+| `sentiment_analytics` | 79,152 B | 10 MB |
+| `trend_detection` | 57,713 B | 10 MB |
+
+Ningún `WHERE` lo arregla: los filtros se aplican **después** de `VECTOR_SEARCH`, no antes.
+
+**Fix:** 50 MB solo en `semantic_search` (~2.4× el corpus, ~9 meses de margen al ritmo de +125 comentarios/semana). Documentado en `rag-quota-limits` y `rag-tool-semantic-search` con el criterio de reversión: cuando el corpus pase de 5,000 filas y el índice IVF sea creable, el escaneo baja y el tope debe volver a bajar.
+
+**Cotización aprobada:** +$0.34 USD/mes (peor caso real), tope duro del guardrail $0.83/mes. Total ~$3.19–$6.69 / $20.00.
 
 ---
 
-## 2. DRIFT DE TERRAFORM — actualizar tfvars
+## 2. Tres invariantes que el código no sostenía (arreglados en `65036a4`)
 
-- `infra/fase2/terraform.tfvars` dice `rag_image_tag = "7cae04b-fix3"`
-- El servicio corre `7cae04b-fix4` (revisión `rag-chat-service-00006-j67`, desplegado vía `gcloud run deploy`)
+### 2.1 Las citas nunca se llenaban — invariante 11 de CLAUDE.md
 
-**Acción:** actualizar `terraform.tfvars` a `7cae04b-fix4` y correr `terraform plan` para confirmar cero drift en la imagen.
+`main.py` las leía de `event.custom_metadata`, que ADK no puebla. `citations` siempre iba `[]` y **no existía ninguna validación**. La evaluación habría reportado 0% de citas aunque el agente respondiera bien.
 
----
+**Fix:** `src/rag_agent/middleware/citations.py`. Se capturan los `function_response` reales de las herramientas durante el loop de eventos y se verifica **en código** que todo `comment_id` citado exista en esos resultados. Una cita sin evidencia degrada la respuesta (no se envía, no se cachea) y se registra en el log.
 
-## 3. PENDIENTE: registrar applies en `infra/APPROVALS.md`
+Decisión de diseño: una respuesta **sin** citas es válida — admitir ausencia de evidencia es la conducta correcta según `rag-synthesis-citations`. Lo que se bloquea es citar algo que no existe. Que falten citas donde debería haberlas es calidad, y eso lo mide `rag-evaluation-suite`.
 
-Hoy se ejecutaron **5 applies** de `infra/fase2/` que NO están registrados. Cada uno con su plan y aprobación de Diego:
+### 2.2 La clave del caché iba sin versionar
 
-| # | Plan | Recursos | Aprobado por Diego |
-|:--|:-----|:---------|:-------------------|
-| 1 | `tfplan_indexes` | 3 índices Firestore + `iap_invoker` + `rag_access` (fix resource) | "Apruebo el plan!" |
-| 2 | `tfplan_iap_fix` | `google_iap_web_cloud_run_service_iam_binding.rag_access` (resource correcto para Cloud Run) | (continuación del mismo) |
-| 3 | `tfplan_eval_iam` | `diego_token_creator` + `rag_backend_invoker` | "Apruebo" |
-| 4 | `tfplan_iap_sa` | SA en binding IAP + quitar invoker (conflicto detectado) | (continuación) |
-| 5 | `tfplan_msg_index` | Reemplazo índice `messages` (DESC→ASC) + update Service | (continuación) |
+`get_cached_response(db, query, {}, "es", "", "", "", user_id)` — tres `""` en los componentes de corpus, prompt y modelo. Todas las respuestas colapsaban en la misma clave, sin invalidación posible.
 
-Además: 4 builds/deploys (`fix1`…`fix4`), brand OAuth creado, `cloudresourcemanager.googleapis.com` + `compute.googleapis.com` habilitadas.
+**Fix:** `src/rag_agent/versions.py`.
+- `corpus_version` = `MAX(updated_at)` de `gold_rag_corpus`, memoizada 5 min (no se hardcodea: es lo que hace que un run del pipeline invalide el caché solo).
+- `PROMPT_VERSION` = constante `"2026-09-05.1"`, **sube a mano en el mismo commit que toque cualquier prompt**. Es el punto frágil del mecanismo.
+- Si la versión del corpus no se puede leer, devuelve `None` y el servicio **se salta el caché**, en vez de sustituir un valor fijo que serviría respuestas viejas sobre datos nuevos.
 
-**Formato:** seguir plantilla del archivo. Raíz `infra/fase2/`, costo $0/mes, verbatim de aprobaciones arriba.
+### 2.3 El Cloud Run Service no declaraba ninguna env var
+
+Funcionaba solo porque los defaults de `main.py` coinciden con producción. **Fix:** `GCP_PROJECT`, `GOLD_DATASET` y `GCP_REGION` declaradas en `cloud_run.tf`.
 
 ---
 
-## 4. EVALUACIÓN (F.2) — lista para correr, bloqueada por el bug
+## 3. Bitácora de aprobaciones — al día
 
-- Runner: `tests/rag_evaluation/run_eval.py` (25 consultas, guarda JSON en `tests/rag_evaluation/results/`)
-- Set de casos: `tests/rag_evaluation/test_cases.py` (15 doradas + 10 adversariales) ✅
-- Autenticación automatizada: **JWT self-signed de `rag-backend-sa`** vía `gcloud iam service-accounts sign-jwt` con:
-  - `aud` = **URL exacta con path**: `https://rag-chat-service-7od5boefba-uc.a.run.app/chat` (¡con `/chat`! El aud raíz o `/*` da 401 "Audience specified does not match requested endpoint")
-- Precondiciones IAM ya aplicadas: `roles/iam.serviceAccountTokenCreator` (Diego→SA), `roles/iap.httpsResourceAccessor` (SA→IAP), SA en `ALLOWED_EMAILS` del código
+`infra/APPROVALS.md` tiene ahora seis entradas de **registro diferido** para los 5 applies y los 4 build/deploy del 2026-09-05 que se ejecutaron con aprobación de Diego pero sin registrar. Reconstruidas desde los planes guardados y el estado real. El retraso queda anotado en las entradas como desviación de `approval-gate` paso 4.
 
-**Después del fix del §1:** ejecutar `python tests/rag_evaluation/run_eval.py` y analizar métricas (citas 100%, rechazo adversarial 100%, exactitud numérica ≥90%).
+Falta registrar el apply de `tfplan_conn_iam` cuando se ejecute.
 
 ---
 
-## 5. Cambios de código ya hechos en esta sesión (en el commit local, sin push)
+## 4. Estado de los tests
 
-- `src/rag_agent/main.py`:
-  - `firestore.Client(database="rag-memory")` (antes default → 404)
-  - `GOLD_DATASET` default corregido: `"youtube_gold"` → `"gold"`
-  - Pasa `GCP_REGION` a `build_agent_pipeline`
-- `src/rag_agent/agents/orchestrator.py`: `Gemini(model=..., client_kwargs={"vertexai": True, "project": ..., "location": ...})` — **clave**: sin `vertexai=True` ADK usa la API de Gemini y falla con "No API key was provided"; con `project/location` pero sin `vertexai=True` falla con "Gemini API does not support project/location"
-- `src/rag_agent/middleware/auth.py`: SA de evaluación agregada a `ALLOWED_EMAILS`
-- `tests/test_rag_auth.py`: test actualizado a 4 emails
-- `infra/fase2/firestore.tf`: 3 índices compuestos + fix `messages` (expires_at **ASCENDING** — el DESC que puse al inicio no lo aceptó Firestore)
-- `infra/fase2/cloud_run.tf`: `ingress = "INGRESS_TRAFFIC_ALL"` + `iap_enabled = true` (el `INTERNAL_LOAD_BALANCER` original rompía IAP con 404)
-- `infra/fase2/iap.tf`: resource correcto `google_iap_web_cloud_run_service_iam_binding` (el `google_iap_web_backend_service_iam_binding` es para LB y daba 404) + SA en members
-- `infra/fase2/iam.tf`: `diego_token_creator`
-- `Dockerfile.rag`: `COPY src/ ./src/` (antes solo `src/rag_agent/` → hatchling fallaba)
-- Nuevo: `cloudbuild.rag.yaml`, `infra/fase2/terraform.tfvars`, `tests/rag_evaluation/run_eval.py`
+**126 pasan** (`--ignore=tests/test_rag_integration.py`; el de integración falla local por falta de ADC, es lo normal). Eran 101.
 
-**Tests:** 101/101 pasan (`--ignore=tests/test_rag_integration.py` — el de integración falla local por falta de ADC, normal).
+Nuevos: `tests/test_rag_citations.py` (14) y `tests/test_rag_versions.py` (10), más uno de contraste de topes de bytes por herramienta.
+
+Corregido de paso: `tests/test_rag_tools.py` importaba `MAX_BYTES_BILLED` de `semantic_search` y lo asertaba contra el `job_config` de `sentiment_analytics`. Pasaba solo porque los tres valores coincidían.
 
 ---
 
-## 6. Archivos temporales a limpiar (no commitear)
+## 5. Verificación después del apply
 
-- `tests/rag_evaluation/_scan.py`
-- `tests/rag_evaluation/_test_tool.py`
-- `tests/rag_evaluation/_iam_check.py`
-- Planes en `infra/fase2/`: `tfplan_indexes`, `tfplan_iap_fix`, `tfplan_eval_iam`, `tfplan_iap_sa`, `tfplan_msg_index` (y `tfplan_fase2` viejo)
-- `/tmp/claim.json`, `/tmp/rag_signed.jwt`, `/tmp/rag_proxy.log` (en WSL)
+**Ya ejecutada, en verde.** Se corre así — impersonando a la SA, que es lo único que prueba el fix de IAM (como owner la consulta pasa aunque el binding no exista):
+
+```bash
+export GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token \
+    --impersonate-service-account=rag-backend-sa@medallon-youtube.iam.gserviceaccount.com)
+.venv/bin/python tests/rag_evaluation/verify_semantic_search.py
+```
+
+Smoke check de los dos bloqueantes a la vez: si falta el IAM da 403, si el tope de bytes está mal da "Query exceeded limit for bytes billed". Resultado obtenido: 5 comentarios con `comment_id`, distancia y canal (Martin Garrix, ILLENIUM, Swedish House Mafia).
+
+Falta lo que Diego va a probar a mano: una consulta real por `/chat`, para ver que las citas ahora llegan pobladas y que la validación en código no degrada respuestas legítimas.
 
 ---
 
-## 7. Checklist Fase F actualizado
+## 6. Evaluación (F.2) — EN ESPERA por decisión de Diego
+
+Diego pidió probar el servicio a mano antes de correr la evaluación. **No ejecutar `run_eval.py` sin su visto bueno.**
+
+- Runner: `tests/rag_evaluation/run_eval.py` (25 consultas → JSON en `tests/rag_evaluation/results/`)
+- Casos: `tests/rag_evaluation/test_cases.py` (15 doradas + 10 adversariales)
+- Métricas objetivo: citas 100%, rechazo adversarial 100%, exactitud numérica ≥90%
+
+**Dos cosas a resolver antes de correrla:**
+1. La SA de evaluación consume su propia cuota de 30/día; una corrida usa 25. Solo cabe una corrida completa por día.
+2. `rag-evaluation-suite` pide correr sin caché, y `/chat` no tiene bandera para desactivarlo. Con el caché ya versionado de verdad, la **primera** corrida del día es toda miss y sale limpia; una segunda del mismo día ya no. Si se quiere una bandera de bypass, hay que agregarla y documentarla en el skill.
+
+---
+
+## 7. Checklist Fase F
 
 | Item | Estado |
 |:-----|:-------|
-| F.1 Build + push imagen | ✅ `7cae04b-fix4` |
-| F.2 Set de evaluación | ⏳ bloqueado por bug §1 |
+| F.1 Build + push imagen | ✅ `65036a4` |
+| F.2 Set de evaluación | ⏸️ en espera — Diego prueba a mano primero |
 | F.3 Cotización + approval | ✅ |
-| F.4 Deploy con IAP | ✅ revisión 00006 |
-| F.5 Verificar 3 identidades | ✅ (Diego validó en navegador + rechazo 4ta) |
-| F.6 Registrar en APPROVALS.md | ⏳ pendiente (3 applies + 4 deploys + brand OAuth) |
+| F.4 Deploy con IAP | ✅ revisión `00007-874` con `65036a4` |
+| F.5 Verificar 3 identidades | ✅ Diego validó en navegador + rechazo de una 4ta |
+| F.6 Registrar en APPROVALS.md | ✅ al día |
 | F.7 Costo y latencia | ⏳ después de F.2 |
 
 ---
 
-## 8. Notas de contexto para la próxima sesión
+## 8. Notas de contexto que siguen vigentes
 
-- **IAP programático con Google-managed OAuth client**: NO sirven ID tokens de gcloud ni `--audiences` con cuenta de usuario. La única vía viable es **JWT self-signed de SA** (`sign-jwt`) con `aud` = URL exacta + path.
-- **`gcloud run services proxy` NO funciona con IAP** (devuelve "Invalid IAP credentials: empty token").
-- **Índices Firestore**: el orden de `expires_at` importa y lo determina Firestore, no la intuición (sessions: DESC, messages: ASC, common_queries: DESC). Usar la URL que Firestore genera en el error "query requires an index".
-- **La SA de evaluación consume su propia cuota** (30/día) — una corrida completa de evaluación usa 25.
-- `rag-evaluation-suite` requiere omitir el caché; el endpoint `/chat` actualmente NO tiene forma de desactivarlo → si se agrega, documentar en el skill.
-- El proxy de gcloud quedó instalado (`cloud-run-proxy` componente) — no molesta.
-- La cuenta activa de gcloud es `diego@talamantes.com.mx`; `GOOGLE_OAUTH_ACCESS_TOKEN` se usa para Terraform (no hay ADC).
+- **IAP programático con cliente OAuth administrado por Google:** no sirven ID tokens de gcloud ni `--audiences` con cuenta de usuario. La única vía es **JWT self-signed de SA** (`gcloud iam service-accounts sign-jwt`) con `aud` = URL exacta **con path**: `https://rag-chat-service-7od5boefba-uc.a.run.app/chat`. El aud raíz o `/*` da 401 "Audience specified does not match requested endpoint".
+- **`gcloud run services proxy` NO funciona con IAP** ("Invalid IAP credentials: empty token").
+- **Índices Firestore:** el orden de `expires_at` lo determina Firestore según la consulta, no la simetría entre índices (`sessions` DESC, `messages` ASC, `common_queries` DESC). La fuente correcta es siempre la URL que Firestore devuelve en el error "query requires an index".
+- **Gemini vía ADK:** `client_kwargs={"vertexai": True, "project": …, "location": …}`. Sin `vertexai=True` usa AI Studio y pide API key; con project/location pero sin la bandera, falla con "Gemini API does not support project/location".
+- **No hay ADC en el entorno.** Terraform y los scripts usan `GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token)`. Cuenta activa: `diego@talamantes.com.mx`.
+- **`gcloud builds submit` y otros comandos mutantes están bloqueados para el agente** por el clasificador de auto mode. Los ejecuta Diego con el prefijo `!` en el chat.
+- El proxy de gcloud quedó instalado (componente `cloud-run-proxy`) — no molesta.
+
+---
+
+## 9. Limpieza — hecha
+
+- Borrados: `tests/rag_evaluation/_scan.py`, `_iam_check.py` (diagnósticos de un solo uso, obsoletos tras el fix).
+- `_test_tool.py` → `tests/rag_evaluation/verify_semantic_search.py` (§5).
+- Borrados los planes viejos de `infra/fase2/`: `tfplan_fase2`, `tfplan_indexes`, `tfplan_iap_fix`, `tfplan_eval_iam`, `tfplan_iap_sa`, `tfplan_msg_index`. Queda solo `tfplan_conn_iam`, que es el pendiente de aplicar.
+- Temporales en WSL (`/tmp/claim.json`, `/tmp/rag_signed.jwt`, `/tmp/rag_proxy.log`): sin tocar, se pueden borrar cuando quieras.

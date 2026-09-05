@@ -335,3 +335,35 @@ describe la ruta de consola.
 - **Verificación:** Diego validó acceso en navegador con las 3 identidades y el rechazo de una 4ta cuenta no autorizada.
 
 **Estado al cierre de estas seis entradas:** el servicio respondía HTTP 200 y el pipeline de agentes funcionaba, pero `semantic_search` fallaba. Ver la entrada siguiente.
+
+## 2026-09-05T14:30:00-06:00 — rag-terraform-root — fase2-fix-semantic-search
+
+- **Recurso(s):** `google_bigquery_connection_iam_member.rag_backend_connection_user` (nuevo) y `google_cloud_run_v2_service.rag_chat` (imagen `7cae04b-fix4` → `65036a4`, más las env vars `GCP_PROJECT`, `GOLD_DATASET`, `GCP_REGION`).
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `terraform -chdir=infra/fase2 apply tfplan_conn_iam`, precedido de `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=65036a4` (ejecutado por Diego).
+- **Costo estimado incremental:** +$0.34 USD/mes. Es el costo de las consultas de `VECTOR_SEARCH` que hasta ahora **no se ejecutaban**: 90 consultas/día × 30 días × 20.9 MB = 55 GB/mes a $6.25/TB. El tope de 50 MB acota el peor caso absoluto a $0.83/mes. El binding IAM y las env vars son $0.00.
+- **Costo total estimado tras el cambio:** ~$3.19 – $6.69 / $20.00 USD
+- **Margen restante:** ~$13.31 (67% del techo libre). **Delta acumulado Fase 2: $1.34 – $4.84 / $5.00** — dentro del sub-techo, pero sin holgura para otro cambio con costo.
+- **¿Contiene datos / requirió backup?:** No — `1 added, 1 changed, 0 destroyed`, ninguna destrucción.
+- **Aprobado por:** Diego (verbatim: "Yes, apruebo, igual arregla los nuevos hallazgos de una vez", y para la ejecución: "Ya quedó! Haz el apply, ya me autentiqué en gcloud")
+- **Ejecutado:** sí — `Apply complete! Resources: 1 added, 1 changed, 0 destroyed.` Revisión `rag-chat-service-00007-874`, `Ready: True`.
+
+**Qué desbloquea.** `semantic_search` llevaba dos fallos encadenados, ambos verificados con evidencia antes de tocar nada:
+
+1. **403 en la conexión.** `ML.GENERATE_EMBEDDING` sale a Vertex AI por `vertex-ai-connection`, recurso con IAM propio: `roles/bigquery.dataViewer` sobre `gold` no alcanza. Mismo gap que Fase 1 (APPROVALS 2026-08-02T19:04:15); se repite porque la conexión es compartida y Fase 2 la usa sin poseerla. La conexión **no** se declara como `resource` ni entra al state de Fase 2 — solo el binding.
+2. **Tope de bytes.** `VECTOR_SEARCH` corre exhaustivo (3,261 filas < las 5,000 que exige un índice IVF) y lee `text_embedding` completa: **20,856,549 bytes** medidos con `--dry_run`. El tope de 10 MB rechazaba toda consulta semántica. Subido a 50 MB **solo** en esa herramienta; `sentiment_analytics` (79 KB) y `trend_detection` (58 KB) siguen en 10 MB. Criterio de reversión documentado en `rag-quota-limits`: cuando el corpus pase de 5,000 filas y el índice sea creable, el escaneo baja y el tope también.
+
+**Verificación post-apply**, ejecutada **impersonando a `rag-backend-sa`** (correrla como Diego no probaría nada del IAM: un owner pasa aunque el binding no exista):
+
+- `tests/rag_evaluation/verify_semantic_search.py` → 5 comentarios con `comment_id`, distancia y canal. Sin 403, sin error de bytes.
+- Invariante §8 del PRD Fase 2 confirmado con la misma identidad: `gold.gold_rag_corpus` → **200**; `silver.silver_youtube_comments`, `bronze.bronze_youtube_comments` y `silver.silver_dead_letter_queue` → **403**. El aislamiento lo sostiene IAM, no el prompt.
+
+**Cambios de código que viajan en la imagen `65036a4`** (commit del mismo nombre) — tres invariantes que el código no sostenía:
+
+- **Citas (CLAUDE.md §11).** `main.py` las leía de `event.custom_metadata`, que ADK nunca puebla: `citations` siempre iba vacío y no existía validación alguna. Ahora se capturan los `function_response` reales de las herramientas y se verifica en código que todo `comment_id` citado exista; una cita sin evidencia degrada la respuesta y no se cachea.
+- **Clave de caché (`rag-response-cache`).** Se pasaba `""` en corpus, prompt y modelo — todas las respuestas colapsaban en una sola clave, sin invalidación posible. La versión del corpus se lee de `MAX(updated_at)` (memoizada 5 min) y la del prompt es una constante que sube a mano. Si la versión no se puede leer, el servicio se salta el caché en vez de servir datos viejos.
+- **Env vars.** El Service no declaraba ninguna y funcionaba solo por los defaults del código.
+
+**Drift corregido:** `terraform.tfvars` decía `7cae04b-fix3` mientras el servicio corría `fix4`, resultado de los `gcloud run deploy` manuales del día anterior. Cualquier apply habría revertido el servicio dos revisiones en silencio. Con esta entrada, el tag en tfvars y la revisión desplegada vuelven a coincidir.
+
+**Pendiente:** F.2 (evaluación de 25 preguntas) en espera — Diego prueba el servicio a mano primero.
