@@ -33,7 +33,7 @@ Toda afirmación basada en datos lleva su fuente. El formato mínimo, derivado d
 [comment_id · "título del video" · canal · fecha · URL]
 ```
 
-**El modelo escribe SOLO `[comment_id]`; el formato completo lo arma el código.** La síntesis cita el ID real entre corchetes, y `render_inline_citations` (en `rag_agent/middleware/citations.py`) lo expande con la metadata de la fila real de la herramienta — nunca con lo que el modelo escribió. Estuvo al revés y el modelo emitía el molde literal `[<comment_id> · "..." · <channel_name> · fecha]` porque un paso intermedio (el texto del `output_key`) había descartado `comment_id` y `channel_name` de los datos que veía la síntesis.
+**El formato completo lo arma el código; el modelo solo apunta al ID real.** La síntesis escribe la cita con el `comment_id` real (a veces con la etiqueta `[<comment_id>: ID · ...]` o solo `[ID]`), y `render_inline_citations` (en `rag_agent/middleware/citations.py`) normaliza **cualquier bloque `[...]` que contenga un comment_id real** al formato canónico, con la metadata de la fila real de la herramienta — nunca con lo que el modelo escribió. Estuvo al revés y el modelo emitía el molde literal `[<comment_id> · "..." · <channel_name> · fecha]` porque un paso intermedio (el texto del `output_key`) había descartado `comment_id` y `channel_name` de los datos que veía la síntesis. La validación corre sobre el texto ya normalizado: un ID inventado no se toca y sigue degradando.
 
 Para resultados de [[rag-tool-sentiment-analytics]] y [[rag-tool-trend-detection]], la cita es el conjunto consultado: canal, periodo y **el `n` de filas** sobre el que se calculó.
 

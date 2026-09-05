@@ -27,8 +27,13 @@ logger = logging.getLogger("rag_agent.citations")
 # El separador puede venir como '·' o, si el modelo lo degrada, como '|' o '-'.
 CITATION_RE = re.compile(r"\[\s*([A-Za-z0-9_.\-]{8,})\s*(?:·|\||—|–|\])")
 
-# Forma EXACTA que el modelo debe emitir para citar un comentario: solo el ID.
-CITACION_ID_RE = re.compile(r"\[\s*([A-Za-z0-9_.\-]{8,})\s*\]")
+# Cualquier bloque entre corchetes: [<comment_id>: Ugz... · "..." · ...] o
+# [Ugz...]. El renderer normaliza el bloque a la forma canónica buscando el ID
+# real de la evidencia dentro de él.
+CITACION_BLOQUE_RE = re.compile(r"\[[^\]]*\]")
+
+# Tokens candidatos a comment_id dentro de un bloque (opacos, >8 chars).
+TOKEN_ID_RE = re.compile(r"[A-Za-z0-9_.\-]{8,}")
 
 MENSAJE_DEGRADADO = (
     "No puedo entregar esta respuesta: incluía citas que no corresponden a "
@@ -103,30 +108,33 @@ def extract_cited_ids(response_text: str) -> set[str]:
 def render_inline_citations(
     response_text: str, tool_payloads: Iterable[tuple[str, dict]]
 ) -> str:
-    """Expande las citas [comment_id] al formato completo con la metadata real.
+    """Normaliza TODA cita entre corchetes al formato canónico con la metadata real.
 
-    El modelo elige QUÉ citar; de CÓMO se ve esa cita se encarga el código: se
-    arma con la fila real de la herramienta (título, canal, fecha, URL), nunca
-    con lo que el modelo escribió. Si el modelo ya escribió la cita completa
-    ([id · ...]), se deja intacta. Un ID que no exista en la evidencia se deja
-    como está — validate_citations lo habría degradado antes de llegar aquí.
+    El modelo elige QUÉ citar; de CÓMO se ve esa cita se encarga el código. El
+    modelo puede escribir [Ugz...], [<comment_id>: Ugz... · "..." · ...] o
+    [Ugz... · "..." · ...] — se busca el ID real dentro del bloque (un token
+    que exista en la evidencia) y la cita se arma con la fila real de la
+    herramienta. Un bloque sin ID real se deja intacto: validate_citations lo
+    trata como inventado o ausente, según corresponda.
     """
     index = evidence_index(tool_payloads)
     if not index:
         return response_text
 
     def reemplaza(match: re.Match) -> str:
-        cid = match.group(1)
-        fila = index.get(cid)
-        if fila is None:
-            return match.group(0)
+        bloque = match.group(0)
+        reales = [tok for tok in TOKEN_ID_RE.findall(bloque) if tok in index]
+        if not reales:
+            return bloque
+        cid = max(reales, key=len)
+        fila = index[cid]
         fecha = str(fila.get("comment_published_at") or "")[:10]
         titulo = fila.get("video_title") or ""
         canal = fila.get("channel_name") or ""
         url = fila.get("video_url") or ""
         return f'[{cid} · "{titulo}" · {canal} · {fecha} · {url}]'
 
-    return CITACION_ID_RE.sub(reemplaza, response_text)
+    return CITACION_BLOQUE_RE.sub(reemplaza, response_text)
 
 
 def validate_citations(

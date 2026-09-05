@@ -343,11 +343,18 @@ async def chat(request: Request) -> JSONResponse:
         if not response_text:
             response_text = "No pude generar una respuesta. Por favor, intenta reformular tu pregunta."
 
-        # 8b. Validación de citas EN CÓDIGO contra los resultados de las tools.
+        # 8b. El formato de la cita lo arma el código, no el modelo. Se
+        # normaliza ANTES de validar: cualquier bloque [...] que contenga un
+        # comment_id real se convierte a [id · "título" · canal · fecha · URL]
+        # con la metadata de la fila. Un bloque sin ID real se deja intacto —
+        # validate_citations lo trata como inventado o ausente, según toque.
+        display_text = render_inline_citations(response_text, tool_payloads)
+
+        # 8c. Validación de citas EN CÓDIGO contra los resultados de las tools.
         # Una cita que no corresponde a ningún comment_id devuelto es una
         # alucinación: la respuesta se degrada, no se envía y no se cachea.
         citas_ok, citations, citas_inventadas = validate_citations(
-            response_text, tool_payloads
+            display_text, tool_payloads
         )
         herramientas = tools_used(tool_payloads)
 
@@ -356,7 +363,7 @@ async def chat(request: Request) -> JSONResponse:
         # número del ejemplo del prompt, con ILLENIUM en 292. Una respuesta
         # convincente y falsa es peor que una evasiva.
         numeros_ok, numeros_inventados = validate_numeric_claims(
-            response_text, tool_payloads
+            display_text, tool_payloads
         )
 
         if not citas_ok or not numeros_ok:
@@ -378,12 +385,6 @@ async def chat(request: Request) -> JSONResponse:
                 "cached": False,
                 "degraded": True,
             })
-
-        # 8c. El formato de la cita lo arma el código, no el modelo. La síntesis
-        # escribe [comment_id]; aquí se expande al formato completo con la
-        # metadata REAL de la fila (título, canal, fecha, URL). Ver
-        # rag-synthesis-citations.
-        display_text = render_inline_citations(response_text, tool_payloads)
 
         # 9. Persistencia
         # Guardar mensaje del usuario

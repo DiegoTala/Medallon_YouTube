@@ -50,7 +50,12 @@ logger = logging.getLogger("rag_agent.versions")
 #   concreta [comment_id · "video_title" · channel_name · fecha], que sí
 #   elicita los corchetes — y ahora el payload crudo trae todos los valores.
 #   render_inline_citations queda como red de seguridad para la forma [id].
-PROMPT_VERSION = "2026-09-05.7"
+# 2026-09-05.8 — el modelo escribía la etiqueta [<comment_id>: ID · ...]:
+#   render_inline_citations ahora normaliza CUALQUIER bloque [...] que
+#   contenga un comment_id real (busca el token en la evidencia) y la
+#   validación corre sobre el texto normalizado. Invalida el caché: las
+#   respuestas cacheadas en .7 traen la etiqueta literal.
+PROMPT_VERSION = "2026-09-05.8"
 
 # ── Versión del corpus ────────────────────────────────────────────────────
 #

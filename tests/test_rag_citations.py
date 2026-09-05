@@ -188,20 +188,37 @@ def test_evidence_index_ignora_resultados_fallidos():
 
 # ── render del formato de cita (lo que ve el usuario en el texto) ──────────
 
-def test_render_expande_el_id_al_formato_completo_con_metadata_real():
-    """El modelo escribe [comment_id]; el código arma la cita con la fila real
-    de la herramienta — nunca con lo que el modelo escribió."""
+CANONICA = f'[{REAL} · "Tomorrowland 2024" · Martin Garrix · 2024-07-21 · https://youtu.be/abc123]'
+
+
+def test_render_normaliza_el_id_suelto_al_formato_completo():
+    """El código arma la cita con la fila real de la herramienta — nunca con lo
+    que el modelo escribió."""
     texto = f'Les encantó: "🔥🎧🎵" [{REAL}].'
-    renderizado = render_inline_citations(texto, _payload(REAL))
-    assert (
-        f'[{REAL} · "Tomorrowland 2024" · Martin Garrix · 2024-07-21'
-        ' · https://youtu.be/abc123]'
-    ) in renderizado
+    assert CANONICA in render_inline_citations(texto, _payload(REAL))
 
 
-def test_render_deja_intacta_una_cita_ya_completa():
-    """Si el modelo ya escribió la cita completa con el ID real, no se toca."""
-    texto = f'[{REAL} · "Tomorrowland 2024" · Martin Garrix · 2024-07-21]'
+def test_render_normaliza_la_cita_con_la_etiqueta_del_modelo():
+    """El modelo escribió [<comment_id>: ID · ...]: la etiqueta sobra, el ID es
+    real. El renderer extrae el ID y arma la cita canónica."""
+    texto = f'[{REAL} · "lo que sea" · canal · 1999-01-01]'
+    assert render_inline_citations(texto, _payload(REAL)) == CANONICA
+    texto2 = f'[<comment_id>: {REAL} · "lo que sea" · canal · 1999-01-01]'
+    assert render_inline_citations(texto2, _payload(REAL)) == CANONICA
+
+
+def test_render_normaliza_una_cita_ya_completa():
+    """La cita completa con el ID real se normaliza a la canónica (fecha
+    recortada a 10 chars y URL agregada)."""
+    texto = f'[{REAL} · "Tomorrowland 2024" · Martin Garrix · 2024-07-21 18:00:00+00:00]'
+    assert render_inline_citations(texto, _payload(REAL)) == CANONICA
+
+
+def test_render_no_toca_bloques_sin_id_real():
+    """Un bloque con solo marcadores ([<comment_id> · ... · <channel_name>])
+    no tiene ID real: se deja intacto y validate_citations lo trata como
+    ausencia de cita, no como inventada."""
+    texto = '[<comment_id> · "THANK YOU CREAMFIELDS GB" · <channel_name> · 2026-08-29]'
     assert render_inline_citations(texto, _payload(REAL)) == texto
 
 
