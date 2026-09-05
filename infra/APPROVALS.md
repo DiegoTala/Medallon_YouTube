@@ -367,3 +367,38 @@ describe la ruta de consola.
 **Drift corregido:** `terraform.tfvars` decía `7cae04b-fix3` mientras el servicio corría `fix4`, resultado de los `gcloud run deploy` manuales del día anterior. Cualquier apply habría revertido el servicio dos revisiones en silencio. Con esta entrada, el tag en tfvars y la revisión desplegada vuelven a coincidir.
 
 **Pendiente:** F.2 (evaluación de 25 preguntas) en espera — Diego prueba el servicio a mano primero.
+
+## 2026-09-05T15:00:00-06:00 — rag-deploy-service — fase2-bienvenida-y-cierre-de-sesion
+
+- **Recurso(s):** `google_cloud_run_v2_service.rag_chat` (solo el tag de imagen: `65036a4` → `33c819c`).
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=33c819c` (ejecutado por Diego, build `e402b0c0`, 44s, digest `sha256:c22ec9057b428c5e811666bca6567f8a49ff8b32c471be5e088d1eb8568afcdf`), luego `terraform -chdir=infra/fase2 apply tfplan_welcome`.
+- **Costo estimado incremental:** $0.00 USD/mes. El endpoint nuevo consulta BigQuery una vez por instancia por hora (~79 KB, memoizado) y no invoca Vertex AI.
+- **Costo total estimado tras el cambio:** ~$3.19 – $6.69 / $20.00 USD (sin cambio)
+- **Margen restante:** ~$13.31 (67% del techo libre). Delta acumulado Fase 2: $1.34 – $4.84 / $5.00.
+- **¿Contiene datos / requirió backup?:** No — `0 added, 1 changed, 0 destroyed`.
+- **Aprobado por:** Diego (verbatim: "Adelante, por el momento con los DJ que tienen comentarios solamente", y para la ejecución: "Ya quedó el commit, prosigue con el deploy")
+- **Ejecutado:** sí — `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Revisión `rag-chat-service-00008-ggx`, `Ready: True`, 100% del tráfico.
+
+**Qué agrega.** Pantalla de bienvenida pedida por Diego: saludo con nombre, descripción del agente, capacidades con ejemplos clicables y la lista de DJs. Más "Cerrar sesión" en el header.
+
+**Decisión de alcance:** la bienvenida lista los **7 canales con comentarios** en `gold_rag_corpus`, no los 10 configurados en `infra/terraform.tfvars`. Third Party, Porter Robinson y DubVision no han producido comentarios (sin videos en la ventana de 7 días). Anunciar un DJ del que no hay datos obliga al agente a responder "no hay comentarios" a algo que él mismo ofreció. La lista se lee del corpus y se corrige sola cuando el pipeline los alcance.
+
+**Verificación post-apply**, contra el servicio real vía IAP (JWT self-signed de `rag-backend-sa`):
+
+- `GET /welcome` → los 7 DJs en orden de volumen, cuota real `25/30` y las 3 capacidades. Sin warnings ni errores en los logs de la revisión.
+- **`/welcome` no consume cuota:** tres llamadas consecutivas, `restantes` fijo en 25. Usa `get_quota_remaining()` (lee sin incrementar), no `check_daily_quota()`.
+
+**Bugs corregidos en el mismo despliegue:**
+
+1. **El marcador de cuota parecía reiniciarse en cada refresh.** No se reiniciaba: el contador de Firestore (`daily_quotas/{sub}:{fecha}`, `Increment` atómico, TTL 2 días) siempre estuvo correcto — se verificó leyendo las cuatro identidades activas, con cuentas de 5, 9, 1 y 7. Lo que fallaba era la UI: `index.html` traía `Consultas hoy: 0/30` escrito a mano y `app.js` arrancaba con `quotaRemaining = 30`, y solo se actualizaba al recibir la primera respuesta de `/chat`. Ahora el número lo pide a `/welcome` al cargar.
+2. **El panel "Fuentes" habría mostrado "Sin detalle" en cada renglón.** `app.js` renderiza `c.video_title`, `c.channel_name` y `c.comment_id`, pero `validate_citations` (desplegado en `65036a4` unas horas antes) devolvía una lista de strings. Ahora devuelve objetos con la metadata **de la fila real de la herramienta**, no del texto que escribió el modelo: el modelo elige qué citar, el código decide cómo se ve la cita.
+3. **`escapeHtml` no escapa comillas** y se usaba para construir un atributo (`data-q` de los ejemplos clicables). Se agregó `escapeAttr`. Hoy el texto es constante del servidor; si algún día viene del corpus, la diferencia importa.
+
+**Identidad:** `authenticate_identity()` devuelve `(sub, email)`. El `sub` sigue siendo la clave de cuota, historial y caché; el email se usa **solo** para el saludo. Indexar por email huerfanaría la memoria ante un cambio de correo.
+
+**Cerrar sesión:** enlace a `/?gcp-iap-mode=CLEAR_LOGIN_COOKIE`. Dos límites conocidos y aceptados: borra la cookie de IAP de esta app pero **no** la sesión de Google, así que si sigue viva IAP reautentica en silencio al volver; y la pantalla de confirmación la sirve IAP, no la app — cualquier página propia está detrás de IAP y pedirla dispararía el login de nuevo. **Sin verificación automatizada**: depende del navegador y de la sesión de Google del usuario.
+
+**Documentación:** `docs/PRD.md`, `docs/HANDOFF.md`, `docs/REPORTE-EJECUTIVO-2026-08-02.md` y los skills `bronze-ingestion-videos` y `docs-maintenance` pasaron de "5 canales" a los 10 reales de `infra/terraform.tfvars` (los cinco últimos se agregaron el 2026-08-30). `rag-fastapi-service` documenta el endpoint nuevo, que está fuera de la cuota, y la distinción entre identidad que se muestra e identidad que indexa.
+
+**Tests:** 139 pasan (eran 126).
