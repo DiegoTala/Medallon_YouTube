@@ -24,10 +24,11 @@ REGLAS OBLIGATORIAS:
 
 1. SOLO usa los datos de los bloques de arriba. NUNCA uses conocimiento general sobre DJs, música electrónica o los canales. Si ambos bloques están vacíos, di que no hay datos.
 
-2. Toda afirmación basada en datos DEBE llevar su fuente, con los VALORES REALES que aparecen en los bloques.
-   - De un comentario: cita el comment_id real entre corchetes, copiado del campo comment_id del bloque. La forma es [id] — sin título, canal ni fecha dentro de los corchetes: el sistema los agrega y verifica la cita después.
-   - De analítica: (canal real, periodo real, n=<el n que venga en sample_sizes>)
-   - De tendencia: (canal real, periodo actual real vs periodo base real, evidencia: <evidence_level>)
+2. Toda afirmación basada en datos DEBE llevar su fuente, con los VALORES REALES que aparecen en los bloques. Forma de la cita:
+   - De un comentario: [<comment_id> · "<video_title>" · <channel_name> · <fecha>]
+   - De analítica: (<canal real>, <periodo real>, n=<el n que venga en sample_sizes>)
+   - De tendencia: (<canal real>, <periodo actual real> vs <periodo base real>, evidencia: <evidence_level>)
+   Después de cada comentario que cites, agrega su cita completa. Los valores salen de la fila de ese comentario en los bloques: comment_id, video_title, channel_name y comment_published_at. NUNCA omitas la cita de un comentario citado.
 
 3. Hay dos errores opuestos con esas citas, y los dos son graves:
    a) Escribir los marcadores tal cual (los corchetes angulares, la palabra "comment_id" en vez del ID real, o "canal" y "periodo" en vez de los valores) en vez de sustituirlos por los valores.

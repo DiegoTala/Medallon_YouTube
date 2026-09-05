@@ -45,7 +45,12 @@ logger = logging.getLogger("rag_agent.versions")
 #   texto del modelo que perdía comment_id/channel_name; la síntesis cita solo
 #   [comment_id] y el código arma el formato completo con la metadata real.
 #   Invalida el caché: las respuestas viejas traían el molde literal.
-PROMPT_VERSION = "2026-09-05.6"
+# 2026-09-05.7 — la forma abstracta "[id]" hizo que la síntesis omitiera las
+#   citas por completo (medido post-deploy). Se revierte a la plantilla
+#   concreta [comment_id · "video_title" · channel_name · fecha], que sí
+#   elicita los corchetes — y ahora el payload crudo trae todos los valores.
+#   render_inline_citations queda como red de seguridad para la forma [id].
+PROMPT_VERSION = "2026-09-05.7"
 
 # ── Versión del corpus ────────────────────────────────────────────────────
 #
