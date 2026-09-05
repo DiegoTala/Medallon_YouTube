@@ -48,6 +48,10 @@ class PipelineConfig:
         return f"{self.project_id}.gold.gold_youtube_embeddings"
 
     @property
+    def gold_rag_corpus_table(self) -> str:
+        return f"{self.project_id}.gold.gold_rag_corpus"
+
+    @property
     def gemini_model(self) -> str:
         return f"{self.project_id}.gold.gemini_flash_model"
 

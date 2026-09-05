@@ -196,3 +196,16 @@ describe la ruta de consola.
 **Tropiezos registrados** (documentados en el mismo skill para que no se repitan): (1) el primer intento de alta falló con *"Alcanzaste el límite de usuarios para Google Workspace Business Starter"* — no era un tope de usuarios del dominio sino de asientos de Workspace, porque la consola intentaba asignar una licencia de pago; (2) activar Cloud Identity Free no basta por sí solo, hay que desactivar el licenciamiento automático; (3) el ajuste vive en **Facturación → Configuración de licencias**, no en Suscripciones ni en Configuración de actualización de usuarios; (4) los usuarios deben crearse **dentro** de la UO con el licenciamiento apagado — crearlos en la raíz reproduce el error original.
 
 **Pendiente derivado:** los tres bindings de `roles/iap.httpsResourceAccessor` para estas identidades se declararán en `infra/fase2/` vía [`rag-terraform-root`](../.claude/skills/rag-terraform-root/SKILL.md) y requerirán su propio ciclo de aprobación.
+
+## 2026-09-04T22:30:00-06:00 — terraform-provision — gold-rag-corpus-table
+
+- **Recurso(s):** google_bigquery_table.gold_rag_corpus (1 recurso)
+- **Raíz Terraform:** infra/ (Fase 1)
+- **Comando:** `terraform -chdir=infra apply tfplan_rag_corpus` (plan generado con `-target=google_bigquery_table.gold_rag_corpus`)
+- **Costo estimado incremental:** $0.00 USD/mes (tabla vacía, storage BigQuery ~$0.02/GB/mes; 0 bytes = $0.00)
+- **Costo total estimado tras el cambio:** ~$1.85 / $20.00 USD (sin cambio)
+- **¿Contiene datos / requirió backup?:** No — creación, no destrucción; no aplica backup.
+- **Aprobado por:** Diego (verbatim: "Apruebo el cambio")
+- **Ejecutado:** sí — sin errores. `Apply complete! Resources: 1 added, 0 changed, 0 destroyed.` Tabla `gold_rag_corpus` creada en el dataset `gold` con 14 campos (esquema PRD Fase 2 §8). Tabla vacía — será poblada por el paso `run_rag_corpus_merge()` del pipeline (Fase A.6).
+
+**Contexto:** esta tabla es la frontera entre Fase 1 (pipeline) y Fase 2 (agente RAG). El MERGE incremental sobre `comment_id` la poblará con los ~3,239 comentarios existentes que ya tienen sentimiento y embedding. Skill: `gold-rag-corpus`.

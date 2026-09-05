@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from medallon_youtube.gold.embeddings import run_embeddings_generation
+from medallon_youtube.gold.rag_corpus import run_rag_corpus_merge
 from medallon_youtube.gold.sentiment import run_sentiment_analysis
 from medallon_youtube.gold.vector_search import MAX_TOP_K, ensure_vector_index, semantic_search
 
@@ -103,3 +104,51 @@ def test_semantic_search_joins_silver_comments_for_text() -> None:
     _, kwargs = client.query.call_args
     params = {p.name: p.value for p in kwargs["job_config"].query_parameters}
     assert params == {"query_comment_id": "c1", "top_k": 5}
+
+
+def test_run_rag_corpus_merge_uses_inner_joins() -> None:
+    client = MagicMock()
+
+    run_rag_corpus_merge(
+        client,
+        corpus_table="proj.gold.gold_rag_corpus",
+        silver_comments_table="proj.silver.silver_youtube_comments",
+        silver_videos_table="proj.silver.silver_youtube_videos",
+        gold_sentiment_table="proj.gold.gold_sentiment_analysis",
+        gold_embeddings_table="proj.gold.gold_youtube_embeddings",
+        batch_execution_id="batch-20260904T120000-abc12345",
+    )
+
+    client.query.assert_called_once()
+    sql = client.query.call_args.args[0]
+    # INNER JOINs garantizan que solo entran filas con sentimiento Y embedding.
+    assert "JOIN `proj.silver.silver_youtube_videos`" in sql
+    assert "JOIN `proj.gold.gold_sentiment_analysis`" in sql
+    assert "JOIN `proj.gold.gold_youtube_embeddings`" in sql
+    # MERGE sobre comment_id como clave natural.
+    assert "MERGE `proj.gold.gold_rag_corpus`" in sql
+    assert "ON target.comment_id = source.comment_id" in sql
+    # WHEN MATCHED solo toca metadatos de video/canal, nunca sentimiento ni embedding.
+    assert "WHEN MATCHED THEN UPDATE SET" in sql
+    assert "video_title" in sql
+    assert "sentiment_label" not in sql.split("WHEN MATCHED")[1].split("WHEN NOT MATCHED")[0]
+    # WHEN NOT MATCHED inserta todos los campos.
+    assert "WHEN NOT MATCHED THEN INSERT" in sql
+
+
+def test_run_rag_corpus_merge_passes_batch_execution_id_as_parameter() -> None:
+    client = MagicMock()
+
+    run_rag_corpus_merge(
+        client,
+        corpus_table="proj.gold.gold_rag_corpus",
+        silver_comments_table="proj.silver.silver_youtube_comments",
+        silver_videos_table="proj.silver.silver_youtube_videos",
+        gold_sentiment_table="proj.gold.gold_sentiment_analysis",
+        gold_embeddings_table="proj.gold.gold_youtube_embeddings",
+        batch_execution_id="batch-20260904T120000-abc12345",
+    )
+
+    _, kwargs = client.query.call_args
+    params = {p.name: p.value for p in kwargs["job_config"].query_parameters}
+    assert params == {"batch_execution_id": "batch-20260904T120000-abc12345"}

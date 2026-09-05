@@ -114,6 +114,7 @@ def test_run_pipeline_executes_layers_in_order() -> None:
     merge_comment_idx = next(i for i, q in enumerate(query_calls) if "silver_youtube_comments" in q and "MERGE" in q)
     sentiment_idx = next(i for i, q in enumerate(query_calls) if "gold_sentiment_analysis" in q)
     embeddings_idx = next(i for i, q in enumerate(query_calls) if "gold_youtube_embeddings" in q and "INSERT" in q)
+    rag_corpus_idx = next(i for i, q in enumerate(query_calls) if "gold_rag_corpus" in q and "MERGE" in q)
     vector_index_idx = next(i for i, q in enumerate(query_calls) if "CREATE VECTOR INDEX" in q)
 
-    assert merge_video_idx < known_ids_idx < merge_comment_idx < sentiment_idx < embeddings_idx < vector_index_idx
+    assert merge_video_idx < known_ids_idx < merge_comment_idx < sentiment_idx < embeddings_idx < rag_corpus_idx < vector_index_idx

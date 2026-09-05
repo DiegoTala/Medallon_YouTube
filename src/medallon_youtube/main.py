@@ -22,7 +22,7 @@ from medallon_youtube.bronze import (
     run_bronze_video_ingestion,
 )
 from medallon_youtube.config import PipelineConfig, load_config
-from medallon_youtube.gold import ensure_vector_index, run_embeddings_generation, run_sentiment_analysis
+from medallon_youtube.gold import ensure_vector_index, run_embeddings_generation, run_rag_corpus_merge, run_sentiment_analysis
 from medallon_youtube.mapping import flatten_comment_thread, flatten_video
 from medallon_youtube.silver import (
     fetch_known_video_ids,
@@ -95,6 +95,18 @@ def run_pipeline(
     run_sentiment_analysis(bq_client, config.gold_sentiment_table, config.silver_comments_table, config.gemini_model)
     run_embeddings_generation(
         bq_client, config.gold_embeddings_table, config.silver_comments_table, config.embedding_model
+    )
+
+    # Gold RAG Corpus: materializa la frontera entre Fase 1 y Fase 2.
+    # INNER JOIN garantiza que solo entran filas con sentimiento Y embedding.
+    run_rag_corpus_merge(
+        bq_client,
+        config.gold_rag_corpus_table,
+        config.silver_comments_table,
+        config.silver_videos_table,
+        config.gold_sentiment_table,
+        config.gold_embeddings_table,
+        batch_execution_id,
     )
 
     # El índice IVF requiere ~5000+ filas; con menos, VECTOR_SEARCH funciona

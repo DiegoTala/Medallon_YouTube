@@ -135,6 +135,31 @@ resource "google_bigquery_table" "gold_youtube_embeddings" {
   ])
 }
 
+# ── Gold RAG Corpus (frontera entre Fase 1 y Fase 2) ─────────────────────
+# Tabla denormalizada que consume el sistema agéntico de Fase 2.
+# Ver .claude/skills/gold-rag-corpus/SKILL.md.
+resource "google_bigquery_table" "gold_rag_corpus" {
+  dataset_id = google_bigquery_dataset.gold.dataset_id
+  table_id   = "gold_rag_corpus"
+
+  schema = jsonencode([
+    { name = "comment_id", type = "STRING", mode = "REQUIRED" },
+    { name = "comment_text", type = "STRING", mode = "REQUIRED" },
+    { name = "text_embedding", type = "FLOAT64", mode = "REPEATED" },
+    { name = "sentiment_label", type = "STRING", mode = "NULLABLE" },
+    { name = "video_id", type = "STRING", mode = "REQUIRED" },
+    { name = "video_title", type = "STRING", mode = "REQUIRED" },
+    { name = "channel_name", type = "STRING", mode = "REQUIRED" },
+    { name = "video_published_at", type = "TIMESTAMP", mode = "REQUIRED" },
+    { name = "comment_published_at", type = "TIMESTAMP", mode = "REQUIRED" },
+    { name = "like_count", type = "INTEGER", mode = "REQUIRED" },
+    { name = "language", type = "STRING", mode = "NULLABLE" },
+    { name = "video_url", type = "STRING", mode = "NULLABLE" },
+    { name = "gold_snapshot_id", type = "STRING", mode = "NULLABLE" },
+    { name = "updated_at", type = "TIMESTAMP", mode = "REQUIRED" },
+  ])
+}
+
 # ── Conexión BigQuery -> Vertex AI (co-ubicada en us-central1, PRD §3) ─────
 
 resource "google_bigquery_connection" "vertex_ai" {
