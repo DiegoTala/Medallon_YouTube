@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube DJ Analytics</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div class="header-content">
+                <h1>YouTube DJ Analytics</h1>
+                <p class="subtitle">Consulta comentarios y tendencias de DJs en YouTube</p>
+            </div>
+            <div class="quota-display">
+                <span id="quota-text">Consultas hoy: 0/30</span>
+            </div>
+        </header>
+
+        <main class="chat-container">
+            <div id="messages" class="messages">
+                <div class="message system">
+                    <p>Haz una pregunta sobre los comentarios de YouTube de DJs. Puedo buscar semánticamente, analizar sentimiento o detectar tendencias.</p>
+                </div>
+            </div>
+        </main>
+
+        <form id="chat-form" class="input-form">
+            <div class="input-wrapper">
+                <textarea
+                    id="query-input"
+                    placeholder="Ejemplo: ¿Qué opinan del último set de DJ Tiësto?"
+                    rows="1"
+                    maxlength="500"
+                ></textarea>
+                <button type="submit" id="send-btn" aria-label="Enviar">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+            <p class="input-hint">Máximo 500 caracteres · Enter para enviar, Shift+Enter para nueva línea</p>
+        </form>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

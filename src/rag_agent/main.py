@@ -12,31 +12,63 @@ es un gasto recurrente por diseño.
 from __future__ import annotations
 
 import logging
+import os
 import traceback
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
-from google.cloud import firestore
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.cloud import bigquery, firestore
+from google.genai import types
 
+from rag_agent.agents.orchestrator import build_agent_pipeline
 from rag_agent.middleware.auth import authenticate
 from rag_agent.middleware.cache import get_cached_response, store_response
 from rag_agent.middleware.quota import check_daily_quota, check_rate_limit
 from rag_agent.middleware.sanitize import sanitize
+from rag_agent.memory.common_queries import record_query
+from rag_agent.memory.session import create_session, get_recent_sessions, load_session_messages, save_message
 
 logger = logging.getLogger("rag_agent")
 
 app = FastAPI(title="YouTube DJ Analytics — RAG Agent", version="0.1.0")
 
+# Static files (UI)
+app.mount("/static", StaticFiles(directory="src/rag_agent/static"), name="static")
+
 # Clientes a nivel de módulo (una vez por instancia, no por request).
 # Ver rag-fastapi-service: "la inicialización pesada va a nivel de módulo,
 # para que ocurra una vez por instancia y no por request."
 db = firestore.Client()
+bq_client = bigquery.Client(project=os.environ.get("GCP_PROJECT", "medallon-youtube"))
+
+# Configuración
+GCP_PROJECT = os.environ.get("GCP_PROJECT", "medallon-youtube")
+GOLD_DATASET = os.environ.get("GOLD_DATASET", "youtube_gold")
+
+# Pipeline de agentes ADK (se construye una vez por instancia)
+root_agent = build_agent_pipeline(bq_client, GCP_PROJECT, GOLD_DATASET)
+session_service = InMemorySessionService()
+runner = Runner(
+    agent=root_agent,
+    app_name="rag_agent",
+    session_service=session_service,
+)
 
 
 @app.get("/health")
 async def health() -> PlainTextResponse:
     """Healthcheck sin costo — no consulta BigQuery ni Vertex AI."""
     return PlainTextResponse("ok")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Sirve la UI del chat."""
+    with open("src/rag_agent/static/index.html") as f:
+        return HTMLResponse(content=f.read())
 
 
 @app.post("/chat")
@@ -81,17 +113,88 @@ async def chat(request: Request) -> JSONResponse:
                 content={"error": "Agotaste las 30 consultas diarias. Vuelve mañana."},
             )
 
-        # 6. Caché (placeholder — las versiones se implementan en Fase D)
-        # cached = get_cached_response(db, query, {}, "es", "", "", "", user_id)
-        # if cached:
-        #     return JSONResponse(content={"response": cached["response"], "citations": cached["citations"], "cached": True})
+        # 6. Caché
+        cached = get_cached_response(db, query, {}, "es", "", "", "", user_id)
+        if cached:
+            # Registrar consulta frecuente (hit de caché igual cuenta)
+            record_query(db, user_id, query, {}, "es")
+            return JSONResponse(content={
+                "response": cached["response"],
+                "citations": cached["citations"],
+                "cached": True,
+                "quota_remaining": remaining,
+            })
 
-        # 7-8. Agentes y herramientas (placeholder para Fase D)
-        response_text = f"[placeholder] Consulta recibida: '{query}'. Agentes pendientes de implementar (Fase D)."
+        # 7. Historial — obtener o crear sesión
+        sessions = get_recent_sessions(db, user_id, limit=1)
+        if sessions:
+            session_id = sessions[0]["id"]
+            history = load_session_messages(db, user_id, session_id)
+        else:
+            session_id = create_session(db, user_id)
+            history = []
+
+        # Construir contexto de historial para el agente
+        history_context = ""
+        if history:
+            recent = history[-6:]  # últimos 3 intercambios
+            history_context = "\n".join(
+                f"{m['role']}: {m['content']}" for m in recent
+            )
+
+        # 8. Agentes y herramientas — ejecutar pipeline ADK
+        full_query = query
+        if history_context:
+            full_query = f"Contexto de conversación reciente:\n{history_context}\n\nConsulta actual: {query}"
+
+        # Crear sesión ADK y ejecutar
+        adk_session = await session_service.create_session(
+            app_name="rag_agent",
+            user_id=user_id,
+        )
+        user_message = types.Content(
+            role="user",
+            parts=[types.Part(text=full_query)],
+        )
+
+        response_text = ""
         citations: list = []
+        tools_used: list[str] = []
 
-        # 9. Persistencia (placeholder para Fase E)
-        # store_response(db, query, {}, "es", "", "", "", response_text, citations, user_id)
+        async for event in runner.run_async(
+            user_id=user_id,
+            session_id=adk_session.id,
+            new_message=user_message,
+        ):
+            if event.is_final_response():
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.text:
+                            response_text += part.text
+                # Extraer citas del metadata si existen
+                if hasattr(event, 'custom_metadata') and event.custom_metadata:
+                    citations = event.custom_metadata.get("citations", [])
+                    tools_used = event.custom_metadata.get("tools_used", [])
+
+        # Validar que la respuesta no esté vacía
+        if not response_text:
+            response_text = "No pude generar una respuesta. Por favor, intenta reformular tu pregunta."
+
+        # 9. Persistencia
+        # Guardar mensaje del usuario
+        save_message(db, user_id, session_id, "user", query)
+
+        # Guardar respuesta del agente
+        save_message(
+            db, user_id, session_id, "assistant", response_text,
+            tools_used=tools_used, citations=citations,
+        )
+
+        # Guardar en caché
+        store_response(db, query, {}, "es", "", "", "", response_text, citations, user_id)
+
+        # Registrar consulta frecuente
+        record_query(db, user_id, query, {}, "es")
 
         return JSONResponse(content={
             "response": response_text,

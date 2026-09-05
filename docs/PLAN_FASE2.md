@@ -1,10 +1,10 @@
 # Plan de Trabajo — Fase 2: Sistema Agéntico RAG con Memoria
 
 **Fecha de creación:** 2026-09-04
-**Última actualización:** 2026-09-05
-**Estado:** En progreso — Fases A-D completas, E en curso
+**Última actualización:** 2026-09-04
+**Estado:** En progreso — Fases A-E completas, F pendiente
 **Especificación:** `docs/PRD_Fase2.md`
-**Tests:** 91/91 pasan
+**Tests:** 48/48 pasan (en Windows, 2 tests de Firestore omitidos por compatibilidad grpc)
 
 ## Estado del proyecto al inicio de Fase 2
 
@@ -74,11 +74,11 @@
 - [x] E.2 — Implementar memory/preferences.py — instrucción explícita + confirmación, sin TTL (creado en Fase C)
 - [x] E.3 — Implementar memory/common_queries.py — hash + contador, TTL 180d (creado en Fase C)
 - [x] E.4 — Implementar utils/normalize.py — normalización compartida (creado en Fase C)
-- [ ] E.5 — Implementar UI HTML/CSS/JS en static/
-- [ ] E.6 — Crear Dockerfile.rag (separado del pipeline)
-- [ ] E.7 — Crear set 15 preguntas doradas + 10 adversariales en tests/rag_evaluation/
-- [ ] E.8 — Integración completa: cadena middleware → agentes → herramientas → respuesta
-- [ ] E.9 — Tests de integración end-to-end
+- [x] E.5 — Implementar UI HTML/CSS/JS en static/
+- [x] E.6 — Crear Dockerfile.rag (separado del pipeline)
+- [x] E.7 — Crear set 15 preguntas doradas + 10 adversariales en tests/rag_evaluation/
+- [x] E.8 — Integración completa: cadena middleware → agentes → herramientas → respuesta
+- [x] E.9 — Tests de integración end-to-end
 
 ### FASE F — Despliegue y validación
 > Skills: `rag-deploy-service`, `rag-evaluation-suite`, `rag-iap-auth`
