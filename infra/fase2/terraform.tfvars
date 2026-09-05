@@ -1,3 +1,3 @@
-rag_image_tag      = "5b43a82"
+rag_image_tag      = "655492d"
 quota_overrides    = "diego@talamantes.com.mx=0"
 global_daily_limit = 300

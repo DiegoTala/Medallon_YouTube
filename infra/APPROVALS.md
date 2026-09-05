@@ -540,3 +540,61 @@ Verificado en vivo tras el deploy — y con una confirmación útil de que se le
 **Tests:** 207 pasan (eran 180). Nuevos: `test_rag_synthesis.py` (verifica que el prompt contenga las llaves — la clase de error que un test de "el pipeline se construye" no ve) y `test_rag_evidence.py`.
 
 **Pendientes:** (1) el historial reusa siempre la misma sesión; (2) escritura de preferencias con confirmación; (3) F.2, la evaluación de 25 preguntas.
+
+## 2026-09-05T16:30:00-06:00 — rag-deploy-service — fase2-validacion-numerica
+
+- **Recurso(s):** `google_cloud_run_v2_service.rag_chat` (solo el tag de imagen: `5b43a82` → `655492d`).
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=655492d` (build `10aa615c`, 42s, digest `sha256:5e61e8aa3a58e5aebb0a20b24a2c532bcf2a39f1d1510942380354a960d5e571`, ejecutado por Diego), luego `terraform -chdir=infra/fase2 apply tfplan_numeros`.
+- **Costo estimado incremental:** $0.00 USD/mes.
+- **Costo total estimado tras el cambio:** ~$3.19 – $6.69 / $20.00 USD
+- **Margen restante:** ~$13.31 (67% libre). Delta acumulado Fase 2: $1.34 – $4.84 / $5.00.
+- **¿Contiene datos / requirió backup?:** No — `0 added, 1 changed, 0 destroyed`.
+- **Aprobado por:** Diego (verbatim: "Adelante, con el punto 4 sobre todo" y "Listo el commit, procede con el deploy")
+- **Ejecutado:** sí — `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Revisión `rag-chat-service-00011-clx`, `Ready: True`.
+
+### El bug: el ejemplo del prompt se convirtió en dato
+
+Diego reportó con capturas una respuesta que decía "ILLENIUM (n=1869)" y "Alesso (n=6)". Los valores reales son **292** y **90**. El `1869` salía del ejemplo del propio prompt de síntesis: `(Martin Garrix, todo el histórico, n=1869)`.
+
+La secuencia importa. Primero el modelo emitía el molde literal —`(canal, periodo, n=X filas)`— y se "corrigió" poniendo un ejemplo con valores realistas. El resultado fue peor: pasó de escribir algo obviamente incompleto a escribir cifras falsas con aire de dato, con su advertencia sobre disparidad de muestras incluida. **Una respuesta persuasiva y falsa es peor que una evasiva.**
+
+Conclusión que quedó en `rag-synthesis-citations`: en un prompt, un número concreto es una sugerencia de qué escribir. El prompt ahora usa marcadores sin rellenar, nombra los **dos** errores opuestos (emitir el molde e inventar el valor) y no contiene ninguna cifra de tres o más dígitos salvo el tope de tokens, verificado por test.
+
+### El control real: `validate_numeric_claims`
+
+Lo pedido explícitamente por Diego ("con el punto 4 sobre todo"). Todo `n=<número>` de la respuesta debe existir en los resultados reales de las herramientas — `sample_sizes`, el `n` de cada fila, `n_current`/`n_baseline` o `count`. Si no, la respuesta se degrada entera.
+
+Es **deliberadamente estrecho**: solo el `n=` del formato que el prompt exige. Validar porcentajes redondeados, fechas o cambios derivados daría falsas alarmas, degradaría respuestas correctas, y el desenlace previsible de eso es que alguien apague el control. Un control angosto que se queda encendido vale más que uno amplio que se desactiva.
+
+**Verificado post-deploy contra el servicio real**, con la misma pregunta de la captura: ILLENIUM 71.2% positivo y Alesso 84.4% — coinciden exactamente con lo medido en BigQuery. La fabricación desapareció.
+
+### Regresión corregida: el umbral contra consultas recortadas
+
+El umbral de 0.35 del deploy anterior rompió "¿Qué opinan de los drops de Martin Garrix?", que devolvía "no se encontraron comentarios relevantes". Causa: el `search_agent` tenía instrucción de *"extraer los términos clave"* y mandaba `"drops"` en vez de la frase completa. Medido contra el corpus:
+
+| lo que recibe `VECTOR_SEARCH` | distancias | pasan 0.35 |
+| :--- | :--- | ---: |
+| `"drops de Martin Garrix"` | 0.224 – 0.292 | 10 de 10 |
+| `"drops"` | 0.343 – 0.514 | 1 de 10 |
+
+Recortar la consulta empeora una búsqueda vectorial, no la enfoca — es pensamiento de buscador por palabras aplicado a embeddings. La instrucción ahora exige la pregunta completa y **lleva la medición dentro**, para que no se revierta por intuición. Verificado post-deploy: la misma pregunta devuelve 10 comentarios reales.
+
+### Otros dos hallazgos del mismo reporte
+
+- **`trend_detection` corría sin que se lo pidieran.** La respuesta de la captura incluía una comparación agosto vs julio que el usuario nunca pidió, violando el invariante de "solo bajo demanda explícita" de `rag-tool-trend-detection`. Corregido en el prompt de analytics, más una regla nueva de síntesis: responder solo lo preguntado.
+- **Los logs de diagnóstico nunca se escribían.** Faltaba `logging.basicConfig`: `logger.info` y `logger.error` de los módulos del proyecto no emitían nada. El log que se había puesto específicamente para calibrar el umbral de relevancia no existía en Cloud Logging, y por eso la causa de la regresión hubo que deducirla midiendo en vez de leerla. Un log que uno cree tener y no tiene es peor que no tenerlo. Verificado post-deploy: los logs ya salen con el formato configurado.
+
+### Versión del prompt
+
+`PROMPT_VERSION` a `2026-09-05.5`. Cambiaron síntesis, search y analytics.
+
+**Tests:** 219 pasan (eran 207).
+
+### Pendiente abierto y conocido: las citas siguen ausentes
+
+Verificado post-deploy: la respuesta a "¿Qué opinan de los drops de Martin Garrix?" **cita el texto de diez comentarios reales, textualmente y sin inventar**, pero no emite el `[comment_id · …]` que el formato exige, así que `citations` llega vacío a la UI.
+
+`validate_citations` no lo atrapa **por diseño**: valida que ninguna cita sea inventada, no que existan citas. Una respuesta sin citas es legítima cuando no hay datos, y bloquear por ausencia degradaría esas.
+
+El invariante 11 de CLAUDE.md ("ninguna respuesta con datos sin cita") **todavía no se cumple**. La regla candidata, bien acotada: si `semantic_search` devolvió filas y la respuesta no cita ningún `comment_id`, es una violación. Requiere medirse antes de activarse, porque degradar de más es la forma en que un control termina apagado.
