@@ -69,11 +69,26 @@ El día de la cuota se calcula en una zona horaria fija y declarada (la del usua
 
 Al agotarse, la respuesta es un mensaje claro con el momento de reinicio — no un error genérico ni un 500.
 
+## Excepciones por identidad
+
+La cuota de 30 admite excepciones por usuario, configuradas en la variable de entorno `QUOTA_OVERRIDES` del Cloud Run Service (`infra/fase2/cloud_run.tf`), con formato `correo=limite`. Un límite de **0 significa sin tope**.
+
+**Van en Terraform y no en Firestore a propósito.** Un override guardado en Firestore sería mutable desde la consola sin dejar rastro; en `cloud_run.tf` aparece en el `terraform plan`, pasa por [[approval-gate]] y queda en `infra/APPROVALS.md`. Un guardrail de presupuesto que se puede cambiar sin auditoría no es un guardrail.
+
+Dos reglas que hacen que la excepción no sea un agujero:
+
+- **Sin tope no es sin medición.** El contador de Firestore se incrementa igual. Es la única forma de saber cuánto está costando la excepción.
+- **Un override mal escrito cae al límite normal**, nunca a "sin tope". `QUOTA_OVERRIDES="diego@…=muchas"` da 30, no infinito. La dirección del fallo importa.
+
 ## Circuito de protección por consumo
 
-Además de los límites por usuario, un tope agregado: si el conteo de consultas del día en todos los usuarios supera un umbral configurado (por defecto `3 usuarios × 30 = 90`, con margen), el servicio deja de invocar a Vertex AI y responde en modo degradado.
+Además de los límites por usuario, un tope agregado: si el conteo de consultas del día sumando a todos los usuarios supera `GLOBAL_DAILY_LIMIT` (por defecto 300), el servicio responde 503 y deja de invocar a Vertex AI.
 
-Existe para el escenario que los límites por usuario no cubren: un bug en el propio servicio que reintenta en bucle con identidad válida. Los tres usuarios son de confianza; el código no necesariamente.
+Existe para el escenario que los límites por usuario no cubren: un bug en el propio servicio que reintenta en bucle con identidad válida. Los usuarios son de confianza; el código no necesariamente.
+
+**Con una identidad sin tope, este circuito es el único límite que queda entre un bucle y la factura**, y por eso se evalúa *antes* que la cuota por usuario. Cuando se concede un override, revisar este número es parte del mismo cambio, no un pendiente.
+
+Lo que acota y lo que no: un día completo contra el tope de 300 cuesta del orden de **$0.50 USD** (~$0.0017 por consulta: cuatro o cinco llamadas a Gemini Flash más ~21 MB de `VECTOR_SEARCH`). Eso protege contra un día malo. **No** protege contra 300 consultas diarias sostenidas un mes — eso serían ~$15 y rompería el techo. El circuito es un cortacircuitos, no un presupuesto: si el consumo real se acerca al tope de forma habitual, la respuesta correcta es recotizar con [[cost-guardrail]], no subir el número.
 
 ## Cotización, no adivinanza
 
@@ -87,6 +102,9 @@ Cualquier cambio a estos valores se cotiza con [[cost-guardrail]] contra el tech
 - **Zona horaria fija y declarada** para el día de la cuota.
 - **El caché no exime de cuota.**
 - **Subir cualquier límite pasa por [[cost-guardrail]]** y, si toca infraestructura, por [[approval-gate]].
+- **Las excepciones de cuota viven en Terraform**, nunca en Firestore, y se registran en `APPROVALS.md`.
+- **Un override ilegible cae al límite normal**, jamás a sin tope.
+- **Sin tope sigue contando**: la medición no es opcional aunque el bloqueo lo sea.
 - **El agotamiento de cuota es una respuesta, no un error.**
 
 ## Relación con otros skills

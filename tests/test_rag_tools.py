@@ -173,3 +173,42 @@ def test_topes_de_bytes_por_herramienta():
     assert TREND_MAX_BYTES == 10 * 1024 * 1024
     # El corpus medido pesa ~20.9 MB: el tope debe dejarlo pasar con margen.
     assert SEARCH_MAX_BYTES > 20_856_549
+
+
+def test_compare_channels_recibe_la_lista():
+    """El wrapper de ADK no exponía `channels`, así que la plantilla filtraba con
+    UNNEST([]) y devolvía cero filas SIN fallar: status success, count 0. Una de
+    las cinco plantillas era inalcanzable y nada lo delataba."""
+    from unittest.mock import MagicMock
+
+    from rag_agent.tools.adk_tools import make_sentiment_analytics_tool
+
+    client = MagicMock()
+    client.query.return_value.result.return_value = []
+    tool = make_sentiment_analytics_tool(client, "proj", "gold")
+    tool("compare_channels", channels=["ILLENIUM", "Alesso"])
+
+    job_config = client.query.call_args.kwargs["job_config"]
+    arrays = {p.name: p.values for p in job_config.query_parameters if hasattr(p, "values")}
+    assert arrays["channels"] == ["ILLENIUM", "Alesso"]
+
+
+def test_toda_plantilla_tiene_sus_parametros_en_el_wrapper():
+    """Un @parametro que la plantilla usa y el wrapper no expone no produce un
+    error: produce una respuesta vacía que el agente reporta como 'no hay datos'."""
+    import inspect
+    import re
+
+    from rag_agent.tools.adk_tools import make_sentiment_analytics_tool
+    from rag_agent.tools.sentiment_analytics import TEMPLATES
+
+    from unittest.mock import MagicMock
+
+    tool = make_sentiment_analytics_tool(MagicMock(), "proj", "gold")
+    expuestos = set(inspect.signature(tool).parameters)
+
+    usados = set()
+    for sql in TEMPLATES.values():
+        usados |= set(re.findall(r"@(\w+)", sql))
+
+    assert usados <= expuestos, f"parámetros sin exponer: {usados - expuestos}"

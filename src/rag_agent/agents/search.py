@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from google.adk.agents import LlmAgent
 
+from rag_agent.agents._instruction import with_context
+
 SEARCH_INSTRUCTION = """Eres un especialista en búsqueda semántica de comentarios de YouTube sobre DJs y música electrónica.
 
 Tu única herramienta es semantic_search, que busca comentarios similares a una consulta en la base de datos Gold.
@@ -20,17 +22,31 @@ Cuando recibas una pregunta:
 3. Ejecuta la búsqueda con parámetros apropiados
 4. Devuelve los resultados estructurados tal como los recibes
 
+SOBRE LOS FILTROS: todos son opcionales y omitirlos es lo normal. Sin fechas se
+busca en todo el histórico, que es lo que quiere decir una pregunta sin fecha.
+Si el usuario usa un periodo relativo ("el último mes"), resuélvelo tú con el
+contexto de abajo — nunca le pidas fechas en formato AAAA-MM-DD. Busca primero
+y reporta lo que encuentres; pedir aclaración es el último recurso, no el
+primero.
+
 No interpretes los resultados — eso lo hace el agente de síntesis.
 No tienes acceso a ninguna otra herramienta ni a BigQuery directamente.
 """
 
 
-def create_search_agent(search_tool, model: str = "gemini-2.5-flash") -> LlmAgent:
+def create_search_agent(
+    search_tool, model="gemini-2.5-flash", config=None, context_provider=None
+) -> LlmAgent:
     """Crea el search_agent con la herramienta semantic_search."""
     return LlmAgent(
         name="search_agent",
         model=model,
-        instruction=SEARCH_INSTRUCTION,
+        description=(
+            "Busca comentarios de YouTube semánticamente similares a una "
+            "consulta. Úsalo cuando la pregunta sea sobre QUÉ dice la gente."
+        ),
+        instruction=with_context(SEARCH_INSTRUCTION, context_provider),
         tools=[search_tool],
         output_key="search_result",
+        generate_content_config=config,
     )

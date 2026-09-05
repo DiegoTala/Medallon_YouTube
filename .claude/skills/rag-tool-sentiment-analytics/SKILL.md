@@ -82,7 +82,23 @@ Antes de ejecutar, cada plantilla valida **sus** parámetros:
 
 Ese último punto es el que más fácil se rompe: una plantilla de canal con `channel_name = NULL` y un `WHERE` mal escrito devuelve la distribución de **los diez canales** presentada como si fuera la de uno.
 
+## El wrapper de ADK debe exponer TODOS los parámetros de la plantilla
+
+`compare_channels` filtra con `WHERE channel_name IN UNNEST(@channels)`. Durante
+un tiempo el wrapper de ADK (`make_sentiment_analytics_tool`) no tenía el
+parámetro `channels`, así que siempre llegaba `[]` y la plantilla **devolvía
+cero filas sin fallar nunca**: `status: "success"`, `count: 0`. Una de las cinco
+plantillas era inalcanzable y nada lo delataba.
+
+Al agregar o modificar una plantilla, la lista de parámetros del wrapper es
+parte del cambio. Un parámetro que la plantilla usa y el wrapper no expone no
+produce un error: produce una respuesta vacía que el agente reporta como "no hay
+datos". Ver el test `test_compare_channels_recibe_la_lista` en
+`tests/test_rag_tools.py`.
+
 ## Invariantes
+
+- **Cada parámetro de una plantilla existe en el wrapper de ADK.** Si no, la plantilla devuelve vacío en silencio.
 
 - **Cero SQL libre.** El texto del usuario nunca llega a formar parte de una consulta, ni siquiera "sanitizado".
 - **Catálogo cerrado.** Agregar una plantilla es un cambio de código revisado, con su prueba en [[rag-evaluation-suite]] — no algo que el agente pueda hacer en tiempo de ejecución.

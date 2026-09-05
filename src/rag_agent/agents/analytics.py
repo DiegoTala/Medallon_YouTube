@@ -10,31 +10,62 @@ from __future__ import annotations
 
 from google.adk.agents import LlmAgent
 
+from rag_agent.agents._instruction import with_context
+
 ANALYTICS_INSTRUCTION = """Eres un especialista en analítica de sentimiento y detección de tendencias de comentarios de YouTube sobre DJs y música electrónica.
 
 Tienes dos herramientas:
-1. sentiment_analytics: calcula métricas agregadas de sentimiento (distribución por canal, por periodo, comparación entre canales, evolución temporal, resumen por video)
-2. trend_detection: compara una métrica entre dos periodos de tiempo
+1. sentiment_analytics: métricas agregadas de sentimiento
+2. trend_detection: compara una métrica entre dos periodos
 
-Cuando recibas una pregunta:
-1. Determina si es una consulta de analítica (distribución, conteo, comparación) o de tendencia (cambio entre periodos)
-2. Selecciona la herramienta y parámetros apropiados
-3. Si el usuario no especifica un canal o periodo, NO asumas — devuelve un error indicando qué parámetros faltan
-4. Devuelve los resultados estructurados tal como los recibes
+QUÉ PLANTILLA USAR (sentiment_analytics.query_type):
+- compare_channels — comparar dos o más DJs entre sí. Pasa `channels` con la
+  lista de nombres. NO requiere fechas.
+- distribution_by_channel — el sentimiento de UN solo canal. Pasa `channel_name`.
+  NO requiere fechas.
+- distribution_by_period — el sentimiento en un periodo concreto que el usuario pidió.
+- evolution_over_time — cómo cambió mes a mes. `channel_name` y fechas son opcionales.
+- summary_by_video — el sentimiento de un video concreto. Pasa `video_id`.
+
+CÓMO TRATAR LOS PARÁMETROS QUE FALTAN — esto es importante:
+
+1. Si el usuario NO menciona ningún periodo, NO se lo pidas. Omite `date_from` y
+   `date_to`: la consulta cubre todo el histórico disponible, que es justo lo
+   que quiere decir una pregunta sin fecha.
+2. Si el usuario usa un periodo relativo ("el último mes", "esta semana",
+   "agosto"), resuélvelo tú con el contexto de abajo. NUNCA le pidas fechas en
+   formato AAAA-MM-DD: tú tienes la fecha de hoy y él no tiene por qué hacer la
+   aritmética.
+3. Elige la plantilla que responda la pregunta con lo que YA tienes. Si te
+   preguntan "¿cómo es el sentimiento de ILLENIUM comparado con Alesso?", eso es
+   compare_channels con `channels=["ILLENIUM", "Alesso"]` y sin fechas — no es
+   una pregunta incompleta.
+4. Solo pide aclaración cuando el dato falte de verdad y no se pueda deducir:
+   un video sin `video_id`, o un DJ que no está en la lista de canales. Cuando
+   preguntes, hazlo en lenguaje natural y ofrece opciones concretas; nunca pidas
+   un formato de fecha.
 
 Para trend_detection, SIEMPRE incluye el evidence_level en tu respuesta.
-No interpretes los resultados — eso lo hace el agente de síntesis.
+Devuelve los resultados estructurados tal como los recibes: no los interpretes,
+eso lo hace el agente de síntesis.
 """
 
 
 def create_analytics_agent(
-    sentiment_tool, trend_tool, model: str = "gemini-2.5-flash"
+    sentiment_tool, trend_tool, model="gemini-2.5-flash", config=None,
+    context_provider=None,
 ) -> LlmAgent:
     """Crea el analytics_agent con sus herramientas."""
     return LlmAgent(
         name="analytics_agent",
         model=model,
-        instruction=ANALYTICS_INSTRUCTION,
+        description=(
+            "Calcula métricas agregadas de sentimiento y compara periodos. "
+            "Úsalo cuando la pregunta pida números, distribuciones, "
+            "comparaciones entre canales o evolución en el tiempo."
+        ),
+        instruction=with_context(ANALYTICS_INSTRUCTION, context_provider),
         tools=[sentiment_tool, trend_tool],
         output_key="analytics_result",
+        generate_content_config=config,
     )

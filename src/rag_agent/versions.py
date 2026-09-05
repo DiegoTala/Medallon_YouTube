@@ -25,7 +25,14 @@ logger = logging.getLogger("rag_agent.versions")
 # con las reglas viejas y nada falla visiblemente.
 #
 # 2026-09-05.1 — versión inicial con validación de citas en código.
-PROMPT_VERSION = "2026-09-05.1"
+# 2026-09-05.2 — topología real (ParallelAgent + SequentialAgent), reglas de
+#   delegación explícitas en el router, memory_agent nuevo y descripciones en
+#   los cuatro agentes. Cambió el prompt de TODOS: las respuestas cacheadas con
+#   la versión anterior se redactaron sin pasar por síntesis.
+# 2026-09-05.3 — contexto situacional (fecha de hoy, periodos resueltos y
+#   catálogo de canales) inyectado en router, search y analytics; reglas de
+#   aclaración reescritas para dejar de pedir fechas en AAAA-MM-DD.
+PROMPT_VERSION = "2026-09-05.3"
 
 # ── Versión del corpus ────────────────────────────────────────────────────
 #

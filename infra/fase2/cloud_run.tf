@@ -58,6 +58,24 @@ resource "google_cloud_run_v2_service" "rag_chat" {
         value = var.region
       }
 
+      # Excepciones de cuota por identidad. Van aquí y no en Firestore a
+      # propósito: así el cambio aparece en `terraform plan`, pasa por
+      # approval-gate y queda en APPROVALS.md. Un override guardado en
+      # Firestore sería mutable sin dejar rastro — justo lo que un guardrail
+      # de presupuesto no debe ser.
+      # Formato "correo=limite"; 0 significa sin tope.
+      env {
+        name  = "QUOTA_OVERRIDES"
+        value = var.quota_overrides
+      }
+
+      # Circuito de protección agregado (rag-quota-limits). Con una identidad
+      # sin tope, este es el ÚNICO límite entre un bug en bucle y la factura.
+      env {
+        name  = "GLOBAL_DAILY_LIMIT"
+        value = tostring(var.global_daily_limit)
+      }
+
       resources {
         limits = {
           cpu    = "1"

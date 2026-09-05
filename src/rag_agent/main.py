@@ -30,7 +30,7 @@ from google.cloud import bigquery, firestore
 from google.genai import types
 
 from rag_agent.agents.orchestrator import MODEL, build_agent_pipeline
-from rag_agent.middleware.auth import authenticate, authenticate_identity, display_name
+from rag_agent.middleware.auth import authenticate_identity, display_name
 from rag_agent.middleware.cache import get_cached_response, store_response
 from rag_agent.middleware.citations import (
     MENSAJE_DEGRADADO,
@@ -38,7 +38,14 @@ from rag_agent.middleware.citations import (
     tools_used,
     validate_citations,
 )
-from rag_agent.middleware.quota import DAILY_QUOTA, check_daily_quota, check_rate_limit, get_quota_remaining
+from rag_agent.middleware.quota import (
+    DAILY_QUOTA,
+    check_daily_quota,
+    check_global_circuit,
+    check_rate_limit,
+    get_quota_remaining,
+    quota_limit_for,
+)
 from rag_agent.middleware.sanitize import sanitize
 from rag_agent.catalog import get_available_channels
 from rag_agent.memory.common_queries import record_query
@@ -64,7 +71,7 @@ GOLD_DATASET = os.environ.get("GOLD_DATASET", "gold")
 GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
 
 # Pipeline de agentes ADK (se construye una vez por instancia)
-root_agent = build_agent_pipeline(bq_client, GCP_PROJECT, GOLD_DATASET, GCP_REGION)
+root_agent = build_agent_pipeline(bq_client, GCP_PROJECT, GOLD_DATASET, GCP_REGION, db=db)
 session_service = InMemorySessionService()
 runner = Runner(
     agent=root_agent,
@@ -116,7 +123,8 @@ async def welcome(request: Request) -> JSONResponse:
     sub, email = authenticate_identity(request)
 
     canales = get_available_channels(bq_client, GCP_PROJECT, GOLD_DATASET)
-    restantes = get_quota_remaining(db, sub)
+    limite = quota_limit_for(email)
+    restantes = get_quota_remaining(db, sub, limite)
 
     return JSONResponse(content={
         "nombre": display_name(email),
@@ -125,7 +133,8 @@ async def welcome(request: Request) -> JSONResponse:
         # Solo los canales CON comentarios: los 10 configurados en Fase 1 no
         # son los que se pueden responder.
         "djs": [c["channel_name"] for c in canales],
-        "cuota": {"restantes": restantes, "limite": DAILY_QUOTA},
+        # limite None -> sin tope; la UI lo muestra como ilimitado.
+        "cuota": {"restantes": restantes, "limite": limite},
     })
 
 
@@ -144,7 +153,7 @@ async def chat(request: Request) -> JSONResponse:
     """
     try:
         # 1-2. IAP + identidad
-        user_id = authenticate(request)
+        user_id, email = authenticate_identity(request)
 
         # Parsear body
         body = await request.json()
@@ -170,12 +179,24 @@ async def chat(request: Request) -> JSONResponse:
                 content={"error": "Límite de 5 consultas por minuto. Intenta en unos segundos."},
             )
 
-        # 5. Cuota diaria
-        allowed, remaining = check_daily_quota(db, user_id)
+        # 5a. Circuito de protección agregado — ANTES de la cuota por usuario.
+        # Con una identidad sin tope, esto es lo único que detiene un bucle.
+        if not check_global_circuit(db):
+            return JSONResponse(
+                status_code=503,
+                content={"error": (
+                    "El servicio alcanzó su límite agregado de consultas del "
+                    "día y se detuvo por protección de costo. Vuelve mañana."
+                )},
+            )
+
+        # 5b. Cuota diaria del usuario (puede tener excepción, ver quota_limit_for)
+        limite = quota_limit_for(email)
+        allowed, remaining = check_daily_quota(db, user_id, limite)
         if not allowed:
             return JSONResponse(
                 status_code=429,
-                content={"error": "Agotaste las 30 consultas diarias. Vuelve mañana."},
+                content={"error": f"Agotaste las {limite} consultas diarias. Vuelve mañana."},
             )
 
         # 6. Caché — la clave se versiona por corpus, prompt y modelo

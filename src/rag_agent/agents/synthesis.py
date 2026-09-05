@@ -30,12 +30,21 @@ FORMATO DE CITAS:
 """
 
 
-def create_synthesis_agent(model: str = "gemini-2.5-flash") -> LlmAgent:
-    """Crea el synthesis_agent SIN herramientas de datos."""
+def create_synthesis_agent(model="gemini-2.5-flash", config=None) -> LlmAgent:
+    """Crea el synthesis_agent SIN herramientas de datos.
+
+    El tope de 3.000 tokens llega por `config` (max_output_tokens), no solo por
+    la regla 6 de la instrucción: un tope pedido en el prompt es una sugerencia.
+    """
     return LlmAgent(
         name="synthesis_agent",
         model=model,
+        description=(
+            "Redacta la respuesta final en prosa a partir de resultados "
+            "estructurados, con sus citas. No accede a datos."
+        ),
         instruction=SYNTHESIS_INSTRUCTION,
         tools=[],
         output_key="final_answer",
+        generate_content_config=config,
     )

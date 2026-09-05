@@ -39,3 +39,29 @@ variable "vertex_connection_id" {
   type        = string
   default     = "vertex-ai-connection"
 }
+
+variable "quota_overrides" {
+  description = <<-EOT
+    Excepciones a la cuota diaria de 30 consultas, como "correo=limite"
+    separadas por coma. Un límite de 0 significa SIN TOPE.
+    Cambiarlo altera un guardrail de costo: cotizar con cost-guardrail y pasar
+    por approval-gate, como cualquier otro cambio de infraestructura.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "global_daily_limit" {
+  description = <<-EOT
+    Tope agregado de consultas por día sumando a todos los usuarios — el
+    circuito de protección de rag-quota-limits. Es la última defensa cuando
+    alguna identidad no tiene tope propio.
+  EOT
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.global_daily_limit >= 30 && var.global_daily_limit <= 1000
+    error_message = "global_daily_limit debe estar entre 30 y 1000."
+  }
+}

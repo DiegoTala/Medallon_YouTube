@@ -76,9 +76,14 @@
         return escapeHtml(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    // limite null / restantes -1 = identidad sin tope (QUOTA_OVERRIDES).
     function updateQuota(remaining, limit) {
         if (limit !== undefined) quotaLimit = limit;
         quotaRemaining = remaining;
+        if (quotaLimit === null || remaining < 0) {
+            quotaText.textContent = 'Consultas hoy: sin límite';
+            return;
+        }
         quotaText.textContent = `Consultas hoy: ${quotaLimit - remaining}/${quotaLimit}`;
     }
 
@@ -109,7 +114,9 @@
                 <p class="cap-heading"><strong>Qué puedes preguntarme</strong></p>
                 <ul class="capabilities">${ejemplos}</ul>
                 ${djs}
-                <p class="quota-note">Tienes ${d.cuota.limite} consultas al día.</p>`;
+                <p class="quota-note">${d.cuota.limite === null
+                    ? 'Tu cuenta no tiene límite diario de consultas.'
+                    : `Tienes ${d.cuota.limite} consultas al día.`}</p>`;
             welcomeBox.hidden = false;
 
             welcomeBox.querySelectorAll('.example').forEach(btn => {
