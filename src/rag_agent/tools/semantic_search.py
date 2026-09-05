@@ -2,7 +2,7 @@
 
 Ver .claude/skills/rag-tool-semantic-search/SKILL.md.
 - top_k ≤ 20 (tope duro en código, no solo documentado)
-- maximum_bytes_billed = 10 MB (rag-quota-limits)
+- maximum_bytes_billed = 50 MB (excepción documentada en rag-quota-limits)
 - Mismo modelo de embedding que el corpus (text-embedding-004)
 - Cero interpolación de strings en SQL
 """
@@ -12,7 +12,24 @@ from __future__ import annotations
 from google.cloud import bigquery
 
 MAX_TOP_K = 20
-MAX_BYTES_BILLED = 10 * 1024 * 1024  # 10 MB
+# Excepción al tope general de 10 MB de rag-quota-limits.
+#
+# VECTOR_SEARCH en modo exhaustivo (el corpus está por debajo de las 5,000 filas
+# que BigQuery exige para un índice vectorial) debe leer la columna
+# `text_embedding` completa: 3,261 filas x 768 floats = ~20 MB. Medido con
+# `bq query --dry_run` el 2026-09-05: 20,856,549 bytes.
+#
+# No es "le falta un filtro": ningún WHERE reduce el escaneo de una búsqueda
+# vectorial exhaustiva. Con el tope de 10 MB BigQuery rechazaba TODA consulta
+# semántica ("Query exceeded limit for bytes billed"), que es como estaba el
+# servicio en producción.
+#
+# 50 MB = ~2.4x el corpus actual, margen de ~9 meses al ritmo de +125
+# comentarios/semana. Sigue siendo un guardrail real: acota el peor caso a
+# 2,700 consultas/mes x 50 MB = 132 GB = ~$0.83 USD/mes.
+# Revisar este valor cuando el corpus pase de 5,000 filas y el índice vectorial
+# sea creable — ahí el escaneo baja y el tope puede volver a bajar.
+MAX_BYTES_BILLED = 50 * 1024 * 1024  # 50 MB
 
 SEARCH_SQL = """
 WITH query_embedding AS (

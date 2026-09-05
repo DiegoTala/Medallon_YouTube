@@ -3,7 +3,13 @@
 Ver .claude/skills/rag-fastapi-service/SKILL.md.
 Cadena de middleware (orden obligatorio):
   1. IAP -> 2. identidad -> 3. sanitización -> 4. rate limit ->
-  5. cuota diaria -> 6. caché -> 7. historial -> 8. Router -> 9. persistencia
+  5. cuota diaria -> 6. caché -> 7. historial -> 8. Router ->
+  8b. validación de citas -> 9. persistencia
+
+La validación de citas (8b) corre contra los resultados reales de las
+herramientas, no contra metadata que el modelo controle: ver
+rag-synthesis-citations. Una respuesta con citas sin evidencia se degrada y
+no se cachea.
 
 El healthcheck NO consulta BigQuery ni Vertex AI — un healthcheck que gasta
 es un gasto recurrente por diseño.
@@ -23,13 +29,20 @@ from google.adk.sessions import InMemorySessionService
 from google.cloud import bigquery, firestore
 from google.genai import types
 
-from rag_agent.agents.orchestrator import build_agent_pipeline
+from rag_agent.agents.orchestrator import MODEL, build_agent_pipeline
 from rag_agent.middleware.auth import authenticate
 from rag_agent.middleware.cache import get_cached_response, store_response
+from rag_agent.middleware.citations import (
+    MENSAJE_DEGRADADO,
+    collect_tool_payloads,
+    tools_used,
+    validate_citations,
+)
 from rag_agent.middleware.quota import check_daily_quota, check_rate_limit
 from rag_agent.middleware.sanitize import sanitize
 from rag_agent.memory.common_queries import record_query
 from rag_agent.memory.session import create_session, get_recent_sessions, load_session_messages, save_message
+from rag_agent.versions import PROMPT_VERSION, get_corpus_version
 
 logger = logging.getLogger("rag_agent")
 
@@ -114,8 +127,21 @@ async def chat(request: Request) -> JSONResponse:
                 content={"error": "Agotaste las 30 consultas diarias. Vuelve mañana."},
             )
 
-        # 6. Caché
-        cached = get_cached_response(db, query, {}, "es", "", "", "", user_id)
+        # 6. Caché — la clave se versiona por corpus, prompt y modelo
+        # (rag-response-cache). Sin versión de corpus no se usa el caché: es
+        # preferible pagar la consulta que servir números viejos sobre datos
+        # nuevos sin ninguna señal.
+        corpus_version = get_corpus_version(bq_client, GCP_PROJECT, GOLD_DATASET)
+        cache_enabled = corpus_version is not None
+
+        cached = (
+            get_cached_response(
+                db, query, {}, "es",
+                corpus_version, PROMPT_VERSION, MODEL, user_id,
+            )
+            if cache_enabled
+            else None
+        )
         if cached:
             # Registrar consulta frecuente (hit de caché igual cuenta)
             record_query(db, user_id, query, {}, "es")
@@ -159,27 +185,52 @@ async def chat(request: Request) -> JSONResponse:
         )
 
         response_text = ""
-        citations: list = []
-        tools_used: list[str] = []
+        # Resultados REALES de las herramientas — la evidencia contra la que se
+        # validan las citas. No se derivan del texto del modelo ni de metadata
+        # que el modelo controle. Ver rag-synthesis-citations.
+        tool_payloads: list[tuple[str, dict]] = []
 
         async for event in runner.run_async(
             user_id=user_id,
             session_id=adk_session.id,
             new_message=user_message,
         ):
+            tool_payloads.extend(collect_tool_payloads(event))
             if event.is_final_response():
                 if event.content and event.content.parts:
                     for part in event.content.parts:
                         if part.text:
                             response_text += part.text
-                # Extraer citas del metadata si existen
-                if hasattr(event, 'custom_metadata') and event.custom_metadata:
-                    citations = event.custom_metadata.get("citations", [])
-                    tools_used = event.custom_metadata.get("tools_used", [])
 
         # Validar que la respuesta no esté vacía
         if not response_text:
             response_text = "No pude generar una respuesta. Por favor, intenta reformular tu pregunta."
+
+        # 8b. Validación de citas EN CÓDIGO contra los resultados de las tools.
+        # Una cita que no corresponde a ningún comment_id devuelto es una
+        # alucinación: la respuesta se degrada, no se envía y no se cachea.
+        citas_ok, citations, citas_inventadas = validate_citations(
+            response_text, tool_payloads
+        )
+        herramientas = tools_used(tool_payloads)
+
+        if not citas_ok:
+            logger.error(
+                "Respuesta degradada por citas sin evidencia: %s", citas_inventadas
+            )
+            save_message(db, user_id, session_id, "user", query)
+            save_message(
+                db, user_id, session_id, "assistant", MENSAJE_DEGRADADO,
+                tools_used=herramientas, citations=[],
+            )
+            record_query(db, user_id, query, {}, "es")
+            return JSONResponse(content={
+                "response": MENSAJE_DEGRADADO,
+                "citations": [],
+                "quota_remaining": remaining,
+                "cached": False,
+                "degraded": True,
+            })
 
         # 9. Persistencia
         # Guardar mensaje del usuario
@@ -188,11 +239,16 @@ async def chat(request: Request) -> JSONResponse:
         # Guardar respuesta del agente
         save_message(
             db, user_id, session_id, "assistant", response_text,
-            tools_used=tools_used, citations=citations,
+            tools_used=herramientas, citations=citations,
         )
 
-        # Guardar en caché
-        store_response(db, query, {}, "es", "", "", "", response_text, citations, user_id)
+        # Guardar en caché (solo si sabemos contra qué versión del corpus)
+        if cache_enabled:
+            store_response(
+                db, query, {}, "es",
+                corpus_version, PROMPT_VERSION, MODEL,
+                response_text, citations, user_id,
+            )
 
         # Registrar consulta frecuente
         record_query(db, user_id, query, {}, "es")

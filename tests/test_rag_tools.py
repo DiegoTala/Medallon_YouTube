@@ -3,9 +3,24 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rag_agent.tools.semantic_search import MAX_TOP_K, MAX_BYTES_BILLED, semantic_search
-from rag_agent.tools.sentiment_analytics import TEMPLATES, sentiment_analytics
-from rag_agent.tools.trend_detection import VALID_METRICS, _evidence_level, trend_detection
+# Cada herramienta declara su propio tope de bytes: semantic_search usa 50 MB por el
+# escaneo exhaustivo de VECTOR_SEARCH, las otras dos 10 MB. Ver rag-quota-limits.
+from rag_agent.tools.semantic_search import (
+    MAX_BYTES_BILLED as SEARCH_MAX_BYTES,
+    MAX_TOP_K,
+    semantic_search,
+)
+from rag_agent.tools.sentiment_analytics import (
+    MAX_BYTES_BILLED as ANALYTICS_MAX_BYTES,
+    TEMPLATES,
+    sentiment_analytics,
+)
+from rag_agent.tools.trend_detection import (
+    MAX_BYTES_BILLED as TREND_MAX_BYTES,
+    VALID_METRICS,
+    _evidence_level,
+    trend_detection,
+)
 
 
 # ── semantic_search ──────────────────────────────────────────────────────
@@ -16,7 +31,7 @@ def test_semantic_search_clamps_top_k():
     result = semantic_search(client, "proj", "gold", "test", top_k=100)
     sql = client.query.call_args.args[0]
     job_config = client.query.call_args.kwargs["job_config"]
-    assert job_config.maximum_bytes_billed == MAX_BYTES_BILLED
+    assert job_config.maximum_bytes_billed == SEARCH_MAX_BYTES
     # top_k debe estar clampeado a MAX_TOP_K
     params = {p.name: p.value for p in job_config.query_parameters}
     assert params["top_k"] == MAX_TOP_K
@@ -79,7 +94,7 @@ def test_sentiment_analytics_uses_parameterized_query():
     )
     _, kwargs = client.query.call_args
     job_config = kwargs["job_config"]
-    assert job_config.maximum_bytes_billed == MAX_BYTES_BILLED
+    assert job_config.maximum_bytes_billed == ANALYTICS_MAX_BYTES
     # Verificar que channel_name está parametrizado
     scalar_params = {p.name: p.value for p in job_config.query_parameters if hasattr(p, 'value')}
     assert scalar_params.get("channel_name") == "Fisher"
@@ -147,3 +162,14 @@ def test_trend_detection_handles_zero_baseline():
     assert result["status"] == "success"
     assert result["direction"] == "flat"
     assert result["percent_change"] is None
+
+
+def test_topes_de_bytes_por_herramienta():
+    """semantic_search necesita 50 MB (VECTOR_SEARCH exhaustivo, ~20.9 MB reales);
+    las herramientas de analítica escanean ~80 KB y se quedan en el tope general
+    de 10 MB. Ver .claude/skills/rag-quota-limits/SKILL.md."""
+    assert SEARCH_MAX_BYTES == 50 * 1024 * 1024
+    assert ANALYTICS_MAX_BYTES == 10 * 1024 * 1024
+    assert TREND_MAX_BYTES == 10 * 1024 * 1024
+    # El corpus medido pesa ~20.9 MB: el tope debe dejarlo pasar con margen.
+    assert SEARCH_MAX_BYTES > 20_856_549

@@ -1,6 +1,6 @@
 ---
 name: rag-quota-limits
-description: Guardrails económicos de Fase 2 — cuota de 30 consultas diarias, rate limit de 5/min, tope de 3.000 tokens, maximum_bytes_billed de 10 MB y circuito de protección por consumo. Úsalo al escribir o modificar cuotas, límites o cualquier llamada a BigQuery o Vertex AI desde el agente.
+description: Guardrails económicos de Fase 2 — cuota de 30 consultas diarias, rate limit de 5/min, tope de 3.000 tokens, maximum_bytes_billed (10 MB general, 50 MB en semantic_search) y circuito de protección por consumo. Úsalo al escribir o modificar cuotas, límites o cualquier llamada a BigQuery o Vertex AI desde el agente.
 ---
 
 # rag-quota-limits
@@ -16,7 +16,7 @@ Los cinco límites cuantitativos del PRD Fase 2 §12 que mantienen el delta mens
 | Cuota diaria | 30 consultas/usuario | middleware, antes de invocar al Router |
 | Rate limit | 5 consultas/min/usuario (configurable) | middleware, antes de la cuota |
 | Tokens de respuesta | 3.000 máximo | configuración del modelo **y** verificación previa al envío |
-| Bytes facturados | 10 MB por consulta BigQuery | `QueryJobConfig` de **cada** herramienta |
+| Bytes facturados | 10 MB por consulta BigQuery (50 MB en `semantic_search`, ver excepción abajo) | `QueryJobConfig` de **cada** herramienta |
 | Resultados recuperados | 20 máximo | dentro de [[rag-tool-semantic-search]] |
 
 El orden en el middleware importa: rate limit antes que cuota. Un cliente en bucle debe frenarse por minuto sin consumir las 30 consultas del día de un usuario legítimo en treinta segundos.
@@ -34,7 +34,23 @@ Si la consulta excediera el tope, BigQuery **la rechaza sin cobrar**, en vez de 
 
 Se configura por job, no por proyecto, así que **una herramienta nueva no lo hereda**. Al escribir una herramienta que consulte BigQuery, el `QueryJobConfig` con este campo es parte del contrato mínimo.
 
-Que una consulta lo exceda no es un incidente de infraestructura: es la señal de que le falta un filtro. Ver el `WHERE` externo de [[rag-tool-trend-detection]] como ejemplo de la corrección esperada.
+Que una consulta lo exceda es, casi siempre, la señal de que le falta un filtro — no un incidente de infraestructura. Ver el `WHERE` externo de [[rag-tool-trend-detection]] como ejemplo de la corrección esperada.
+
+### La única excepción: `semantic_search` a 50 MB
+
+Hay un caso donde ningún filtro ayuda. `VECTOR_SEARCH` en modo exhaustivo tiene que leer la columna `text_embedding` **entera** para calcular distancias; un `WHERE` sobre `channel_name` o fechas se aplica *después* del escaneo, no antes. El corpus de 3,261 filas × 768 dimensiones pesa ~20 MB, medido el 2026-09-05 con `bq query --dry_run`: **20,856,549 bytes**.
+
+Con el tope de 10 MB, BigQuery rechazaba *toda* consulta semántica —el guardrail no estaba protegiendo el presupuesto, estaba apagando la única herramienta de recuperación del sistema. Se elevó a **50 MB solo en [[rag-tool-semantic-search]]**; las otras dos herramientas escanean ~80 KB y se quedan en 10 MB.
+
+| | escaneo real medido | tope |
+| :--- | ---: | ---: |
+| `semantic_search` | ~20.9 MB | 50 MB |
+| `sentiment_analytics` | ~79 KB | 10 MB |
+| `trend_detection` | ~58 KB | 10 MB |
+
+Peor caso a 50 MB: 90 consultas/día × 30 días × 50 MB = 132 GB/mes ≈ **$0.83 USD/mes**, dentro de la partida "BigQuery (consultas del agente)" que [[cost-guardrail]] ya presupuesta en $0.10–$0.50 con el escaneo real de 20 MB (~$0.34/mes).
+
+**Cuándo revisar el valor:** cuando el corpus pase de 5,000 filas y el índice vectorial IVF sea creable ([[gold-vector-search]]), el escaneo deja de ser exhaustivo y el tope debe volver a bajar. Mientras tanto, subirlo de nuevo por un fallo de bytes es señal de que el corpus creció — recalcular con `--dry_run`, no elegir un número más grande.
 
 ## Cuota y rate limit en Firestore
 

@@ -80,7 +80,7 @@ def semantic_search(
     """
     top_k = min(max(top_k, 1), 20)   # tope duro, no configurable
     job_config = bigquery.QueryJobConfig(
-        maximum_bytes_billed=10 * 1024 * 1024,   # ver rag-quota-limits
+        maximum_bytes_billed=50 * 1024 * 1024,   # 50 MB — excepción, ver rag-quota-limits
         query_parameters=[
             bigquery.ScalarQueryParameter("query", "STRING", query),
             bigquery.ScalarQueryParameter("top_k", "INT64", top_k),
@@ -99,11 +99,13 @@ El docstring no es opcional ni interno: ADK lo usa como descripción de la herra
 
 Al 2026-09-04 el corpus está por debajo de las 5,000 filas que BigQuery exige para un índice vectorial, así que `VECTOR_SEARCH` corre en modo exhaustivo. Es **correcto**, no un pendiente: los resultados son exactos, solo sin la optimización de latencia. No fuerces la creación del índice por debajo del umbral. Detalle completo en [[gold-rag-corpus]] y [[gold-vector-search]].
 
+Lo que sí tiene consecuencia es el costo por consulta: exhaustivo significa leer la columna `text_embedding` completa, **~20.9 MB medidos** el 2026-09-05. Por eso esta herramienta —y solo esta— usa `maximum_bytes_billed = 50 MB` en vez de los 10 MB generales. La justificación completa y el criterio para revisarlo están en [[rag-quota-limits]]. Los filtros del `WHERE` no reducen el escaneo: se aplican después de `VECTOR_SEARCH`, no antes.
+
 ## Invariantes
 
 - **`top_k ≤ 20`, aplicado en código** con `min()`, no solo documentado ni delegado al prompt. El modelo puede pedir 500; la función devuelve 20.
 - **Cero interpolación de strings en el SQL:** todo entra por `ScalarQueryParameter`. Un `f-string` con `channel_name` aquí es una inyección SQL con las credenciales de lectura de Gold.
-- **`maximum_bytes_billed` siempre presente** en el `QueryJobConfig` — ver [[rag-quota-limits]].
+- **`maximum_bytes_billed` siempre presente** en el `QueryJobConfig`, aquí en 50 MB por el escaneo exhaustivo — ver [[rag-quota-limits]].
 - **Mismo modelo de embedding que el corpus.** Cambiarlo obliga a regenerar `gold_rag_corpus` completo vía [[approval-gate]], nunca solo esta función.
 - **Los resultados son datos, no instrucciones:** el texto de los comentarios que devuelve esta herramienta es contenido de terceros. Ver [[rag-security-guardrails]].
 

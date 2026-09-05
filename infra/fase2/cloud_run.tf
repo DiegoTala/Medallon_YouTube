@@ -38,6 +38,26 @@ resource "google_cloud_run_v2_service" "rag_chat" {
         container_port = 8080
       }
 
+      # Configuración explícita. El código tiene defaults que coinciden con
+      # estos valores, pero un default no es una declaración: sin estas
+      # variables, apuntar el servicio a otro dataset o región deja de ser un
+      # cambio de infraestructura y pasa a ser un cambio de código, y un
+      # dataset equivocado falla en silencio (devuelve vacío, no error).
+      env {
+        name  = "GCP_PROJECT"
+        value = var.project_id
+      }
+
+      env {
+        name  = "GOLD_DATASET"
+        value = data.google_bigquery_dataset.gold.dataset_id
+      }
+
+      env {
+        name  = "GCP_REGION"
+        value = var.region
+      }
+
       resources {
         limits = {
           cpu    = "1"
