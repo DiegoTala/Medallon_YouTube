@@ -22,6 +22,9 @@ ALLOWED_EMAILS = frozenset({
     "diego@talamantes.com.mx",
     "medallon.rag.test01@talamantes.com.mx",
     "medallon.rag.test02@talamantes.com.mx",
+    # SA de evaluación (rag-evaluation-suite): invoca vía JWT self-signed
+    # con binding IAP; la cuota la consume esta identidad, no la de Diego.
+    "rag-backend-sa@medallon-youtube.iam.gserviceaccount.com",
 })
 
 

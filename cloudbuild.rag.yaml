@@ -1,0 +1,13 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.rag'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/${PROJECT_ID}/rag-agent/rag-agent:${_TAG}'
+      - '.'
+images:
+  - 'us-central1-docker.pkg.dev/${PROJECT_ID}/rag-agent/rag-agent:${_TAG}'
+substitutions:
+  _TAG: 'latest'

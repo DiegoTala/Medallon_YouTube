@@ -56,3 +56,13 @@ resource "google_project_iam_member" "diego_monitoring_viewer" {
   role    = "roles/monitoring.viewer"
   member  = "user:diego@talamantes.com.mx"
 }
+
+# Diego: emisión de ID tokens con audience para la evaluación automatizada
+# (rag-evaluation-suite). Permite impersonar rag-backend-sa vía
+# `gcloud auth print-identity-token --impersonate-service-account`.
+# Aprobado por Diego 2026-09-05. Costo $0/mes.
+resource "google_service_account_iam_member" "diego_token_creator" {
+  service_account_id = google_service_account.rag_backend.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "user:diego@talamantes.com.mx"
+}

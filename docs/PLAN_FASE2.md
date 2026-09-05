@@ -83,13 +83,13 @@
 ### FASE F — Despliegue y validación
 > Skills: `rag-deploy-service`, `rag-evaluation-suite`, `rag-iap-auth`
 
-- [ ] F.1 — Build + push imagen Docker a Artifact Registry
-- [ ] F.2 — Ejecutar set de evaluación contra datos reales
-- [ ] F.3 — Cotización + approval-gate para despliegue Cloud Run Service
-- [ ] F.4 — Deploy del servicio con IAP habilitado
-- [ ] F.5 — Verificar acceso con las 3 identidades reales
-- [ ] F.6 — Registrar en infra/APPROVALS.md
-- [ ] F.7 — Medir costo real y latencia
+- [x] F.1 — Build + push imagen Docker a Artifact Registry (`sha256:6cc21661...`, tag `7cae04b`, 44s)
+- [ ] F.2 — Ejecutar set de evaluación contra datos reales (pendiente: IAP propagation)
+- [x] F.3 — Cotización + approval-gate para despliegue Cloud Run Service (aprobado por Diego)
+- [x] F.4 — Deploy del servicio con IAP habilitado (revisión `rag-chat-service-00002-hld`)
+- [ ] F.5 — Verificar acceso con las 3 identidades reales (pendiente: IAP propagation)
+- [x] F.6 — Registrar en infra/APPROVALS.md
+- [ ] F.7 — Medir costo real y latencia (pendiente: tráfico real)
 
 ## Presupuesto
 

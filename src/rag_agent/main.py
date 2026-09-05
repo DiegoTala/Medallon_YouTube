@@ -41,15 +41,16 @@ app.mount("/static", StaticFiles(directory="src/rag_agent/static"), name="static
 # Clientes a nivel de módulo (una vez por instancia, no por request).
 # Ver rag-fastapi-service: "la inicialización pesada va a nivel de módulo,
 # para que ocurra una vez por instancia y no por request."
-db = firestore.Client()
+db = firestore.Client(database="rag-memory")
 bq_client = bigquery.Client(project=os.environ.get("GCP_PROJECT", "medallon-youtube"))
 
 # Configuración
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "medallon-youtube")
-GOLD_DATASET = os.environ.get("GOLD_DATASET", "youtube_gold")
+GOLD_DATASET = os.environ.get("GOLD_DATASET", "gold")
+GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
 
 # Pipeline de agentes ADK (se construye una vez por instancia)
-root_agent = build_agent_pipeline(bq_client, GCP_PROJECT, GOLD_DATASET)
+root_agent = build_agent_pipeline(bq_client, GCP_PROJECT, GOLD_DATASET, GCP_REGION)
 session_service = InMemorySessionService()
 runner = Runner(
     agent=root_agent,

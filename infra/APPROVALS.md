@@ -233,3 +233,26 @@ describe la ruta de consola.
 - **Ejecutado:** sí — parcial (14/16 recursos). Los 2 bindings de IAP se diferieron a Fase F por dependencia de imagen + propagación de API. APIs habilitadas durante el apply: `firestore.googleapis.com`, `iap.googleapis.com`. Recursos importados al state (creados en apply que timeoutó): `google_firestore_database.rag`, `google_cloud_run_v2_service.rag_chat`.
 
 **Tropiezos registrados:** (1) la API de Firestore no estaba habilitada en el proyecto — `gcloud services enable firestore.googleapis.com` antes de re-plan; (2) el apply de Firestore TTL fields timeoutó a los 5 minutos, dejando el state bloqueado — `terraform force-unlock` + import de recursos ya creados; (3) la API de IAP se habilitó pero el service account de IAP (`service-180406516352@gcp-sa-iap`) tarda en propagarse — bindings diferidos.
+
+## 2026-09-05T10:20:00-06:00 — rag-deploy-service — fase2-rag-agent-deploy
+
+- **Recurso(s):** Artifact Registry `rag-agent` (imagen Docker), Cloud Run Service `rag-chat-service` (revisión `rag-chat-service-00002-hld`), IAM bindings `roles/run.invoker` (3 usuarios), IAM bindings `roles/iap.httpsResourceAccessor` (3 usuarios).
+- **Raíz Terraform:** N/A — despliegue manual vía `gcloud builds submit` + `gcloud run deploy` + `gcloud iap web add-iam-policy-binding`.
+- **Comando:**
+  1. `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=7cae04b` (Cloud Build, 44s)
+  2. `gcloud run deploy rag-chat-service --image=us-central1-docker.pkg.dev/medallon-youtube/rag-agent/rag-agent:7cae04b --region=us-central1 --project=medallon-youtube`
+  3. `gcloud run services add-iam-policy-binding rag-chat-service --member="user:diego@talamantes.com.mx" --role="roles/run.invoker"` (×3 usuarios)
+  4. `gcloud iap web add-iam-policy-binding --member="user:diego@talamantes.com.mx" --role="roles/iap.httpsResourceAccessor"` (×3 usuarios)
+  5. `gcloud services enable cloudresourcemanager.googleapis.com` (requerido para IAP IAM)
+- **Costo estimado incremental:** +$1.00 - $4.50 USD/mes (Cloud Run Service scale-to-zero + Firestore + BigQuery queries).
+- **Costo total estimado tras el cambio:** ~$2.85 - $6.35 / $20.00 USD
+- **¿Contiene datos / requirió backup?:** No — despliegue de servicio, no destrucción de datos.
+- **Aprobado por:** Diego (verbatim: "1. Debe de estar en wsl, ya inicié sesión en gcloud por ti 2. Por favor 3. Adelante, apruebo el costo. Cualquier cosa rara o cambio extra que se requiera me vuelves a preguntar")
+- **Ejecutado:** sí — imagen construida y empujada exitosamente (`sha256:6cc21661d8dfdc1658ba62079333a74914af2ec1f6cd5c592ea9e1f47e9925bd`). Cloud Run Service desplegado con revisión `rag-chat-service-00002-hld`. IAM bindings de Cloud Run e IAP aplicados para las 3 identidades. API `cloudresourcemanager.googleapis.com` habilitada (requerida para IAP IAM).
+
+**Notas:**
+- El Dockerfile.rag se corregió para copiar todo `src/` en lugar de solo `src/rag_agent/` (requerido por hatchling).
+- Se creó `cloudbuild.rag.yaml` para builds específicos de Fase 2 (usa `Dockerfile.rag`).
+- El primer build con `gcloud builds submit --tag=` usó el `Dockerfile` del pipeline (Fase 1) por defecto — corregido con `--config=cloudbuild.rag.yaml`.
+- IAP puede tardar unos minutos en propagarse. Verificación pendiente con las 3 identidades.
+- El set de evaluación (15 doradas + 10 adversariales) debe ejecutarse contra el servicio real una vez IAP esté activo.

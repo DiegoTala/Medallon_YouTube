@@ -14,7 +14,13 @@ resource "google_cloud_run_v2_service" "rag_chat" {
 
   # IAP nativo de Cloud Run, sin Load Balancer (PRD §11).
   # Ver rag-iap-auth/SKILL.md.
-  ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  # INGRESS_TRAFFIC_ALL es necesario: IAP nativo intercepta el endpoint
+  # run.app directamente; INTERNAL_LOAD_BALANCER requiere un LB externo
+  # (verificado en el despliegue del 2026-09-05 — con INTERNAL_LOAD_BALANCER
+  # el servicio devolvía 404 al acceso directo).
+  ingress = "INGRESS_TRAFFIC_ALL"
+
+  iap_enabled = true
 
   template {
     service_account = google_service_account.rag_backend.email

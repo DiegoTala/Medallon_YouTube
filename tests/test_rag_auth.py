@@ -28,4 +28,6 @@ def test_allowed_emails_contains_all_three():
     assert "diego@talamantes.com.mx" in ALLOWED_EMAILS
     assert "medallon.rag.test01@talamantes.com.mx" in ALLOWED_EMAILS
     assert "medallon.rag.test02@talamantes.com.mx" in ALLOWED_EMAILS
-    assert len(ALLOWED_EMAILS) == 3
+    # SA de evaluación (rag-evaluation-suite) — aprobado 2026-09-05
+    assert "rag-backend-sa@medallon-youtube.iam.gserviceaccount.com" in ALLOWED_EMAILS
+    assert len(ALLOWED_EMAILS) == 4
