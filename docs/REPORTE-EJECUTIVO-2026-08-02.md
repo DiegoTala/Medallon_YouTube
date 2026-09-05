@@ -14,7 +14,7 @@
 
 ## 1. Resumen de Arquitectura
 
-**YouTube DJ Analytics** es un pipeline de datos medallón (Bronze → Silver → Gold), 100% serverless, que extrae videos y comentarios de 5 canales de DJs de música electrónica desde la YouTube Data API v3, los valida y estructura, y aplica clasificación de sentimiento y búsqueda semántica con Vertex AI Gemini directamente en SQL sobre BigQuery.
+**YouTube DJ Analytics** es un pipeline de datos medallón (Bronze → Silver → Gold), 100% serverless, que extrae videos y comentarios de 10 canales de DJs de música electrónica desde la YouTube Data API v3, los valida y estructura, y aplica clasificación de sentimiento y búsqueda semántica con Vertex AI Gemini directamente en SQL sobre BigQuery.
 
 La orquestación se centraliza en un único **Cloud Run Job** (contenedor Python), disparado semanalmente por **Cloud Scheduler** — se descartó Cloud Composer deliberadamente para evitar costos fijos mínimos. Toda la infraestructura se provisiona de forma declarativa con **Terraform**.
 

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from rag_agent.middleware.citations import (
     collect_tool_payloads,
+    evidence_index,
     extract_cited_ids,
     tools_used,
     valid_comment_ids,
@@ -24,7 +25,17 @@ def _payload(*comment_ids):
         {
             "status": "success",
             "count": len(comment_ids),
-            "results": [{"comment_id": cid, "comment_text": "..."} for cid in comment_ids],
+            "results": [
+                {
+                    "comment_id": cid,
+                    "comment_text": "...",
+                    "video_title": "Tomorrowland 2024",
+                    "channel_name": "Martin Garrix",
+                    "video_url": "https://youtu.be/abc123",
+                    "comment_published_at": "2024-07-21 18:00:00+00:00",
+                }
+                for cid in comment_ids
+            ],
         },
     )]
 
@@ -65,42 +76,42 @@ def test_reune_ids_de_varias_herramientas():
 
 def test_cita_respaldada_pasa():
     texto = f'[{REAL} · "video" · canal · 2024-07-21]'
-    ok, validas, inventadas = validate_citations(texto, _payload(REAL))
+    ok, citas, inventadas = validate_citations(texto, _payload(REAL))
     assert ok is True
-    assert validas == [REAL]
+    assert [c["comment_id"] for c in citas] == [REAL]
     assert inventadas == []
 
 
 def test_cita_inventada_falla():
     texto = f'[{INVENTADO} · "video" · canal · 2024-07-21]'
-    ok, validas, inventadas = validate_citations(texto, _payload(REAL))
+    ok, citas, inventadas = validate_citations(texto, _payload(REAL))
     assert ok is False
-    assert validas == []
+    assert citas == []
     assert inventadas == [INVENTADO]
 
 
 def test_una_cita_inventada_entre_varias_reales_falla():
     texto = f'[{REAL} · "a" · c · f] y también [{INVENTADO} · "b" · c · f]'
-    ok, validas, inventadas = validate_citations(texto, _payload(REAL))
+    ok, citas, inventadas = validate_citations(texto, _payload(REAL))
     assert ok is False
-    assert validas == [REAL]
+    assert [c["comment_id"] for c in citas] == [REAL]
     assert inventadas == [INVENTADO]
 
 
 def test_respuesta_sin_citas_es_valida():
     """Admitir ausencia de evidencia es una respuesta correcta, no una falla."""
-    ok, validas, inventadas = validate_citations(
+    ok, citas, inventadas = validate_citations(
         "No hay comentarios en los datos disponibles que hablen de eso.",
         [("semantic_search", {"status": "success", "results": []})],
     )
     assert ok is True
-    assert validas == []
+    assert citas == []
     assert inventadas == []
 
 
 def test_citar_sin_que_ninguna_herramienta_haya_corrido_falla():
     texto = f'[{REAL} · "video" · canal · 2024-07-21]'
-    ok, _validas, inventadas = validate_citations(texto, [])
+    ok, _citas, inventadas = validate_citations(texto, [])
     assert ok is False
     assert inventadas == [REAL]
 
@@ -128,3 +139,33 @@ def test_collect_tool_payloads_ignora_partes_de_texto():
 def test_tools_used_deduplica():
     payloads = _payload(REAL) + _payload("x_valido_1234")
     assert tools_used(payloads) == ["semantic_search"]
+
+
+# ── metadata de la cita (lo que consume la UI) ───────────────────────────
+
+def test_la_cita_lleva_la_metadata_real_no_el_texto_del_modelo():
+    """app.js renderiza c.video_title, c.channel_name y c.comment_id. Cuando
+    validate_citations devolvía strings, el panel "Fuentes" mostraba
+    "Sin detalle" en cada renglón."""
+    texto = f'[{REAL} · "lo que el modelo haya escrito" · otro canal · 1999-01-01]'
+    _ok, citas, _inv = validate_citations(texto, _payload(REAL))
+    cita = citas[0]
+    # La metadata sale del resultado de la herramienta, no del texto citado.
+    assert cita["video_title"] == "Tomorrowland 2024"
+    assert cita["channel_name"] == "Martin Garrix"
+    assert cita["video_url"] == "https://youtu.be/abc123"
+    assert cita["comment_published_at"].startswith("2024-07-21")
+
+
+def test_campos_faltantes_quedan_como_cadena_vacia():
+    payload = [("semantic_search", {
+        "status": "success",
+        "results": [{"comment_id": REAL, "video_title": None}],
+    })]
+    cita = evidence_index(payload)[REAL]
+    assert cita["video_title"] == ""
+    assert cita["channel_name"] == ""
+
+
+def test_evidence_index_ignora_resultados_fallidos():
+    assert evidence_index([("semantic_search", {"status": "error"})]) == {}

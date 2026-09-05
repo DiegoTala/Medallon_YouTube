@@ -43,7 +43,7 @@ Todo el pipeline está implementado en `src/medallon_youtube/` y pasa **41/41 te
 
 **Secreto usado:** `API-YouTube` (Secret Manager, 1 versión enabled, creado manualmente por Diego fuera de Terraform) — no `youtube-api-key` como decían las sesiones anteriores de este handoff; ese nombre se descartó y se destruyó (ver ciclo 4 arriba). `infra/secrets.tf` ahora solo tiene un `data` source de solo lectura sobre `API-YouTube`.
 
-### Los 5 canales configurados (`infra/terraform.tfvars`)
+### Los 10 canales configurados (`infra/terraform.tfvars`)
 
 Resueltos por scraping de solo lectura (sin API key), verificados contra el `<title>` de cada página:
 
@@ -52,6 +52,15 @@ Resueltos por scraping de solo lectura (sin API key), verificados contra el `<ti
 - Swedish House Mafia → `UC5HEq5U--O5nn134mizyCcw`
 - Third Party → `UCD0LPhlTZ9XANWXQh3t-VsQ`
 - Martin Garrix → `UC5H_KXkPbEsGs0tFt8R35mA`
+- Porter Robinson → `UCKKKYE55BVswHgKihx5YXew`
+- DubVision → `UCdbFjONDWTsdy8pgCsgvlxg`
+- Avicii → `UCPHjpfnnGklkRBBTd0k6aHg`
+- Afrojack → `UCmKm7HJdOfkWLyml-fzKlVg`
+- Zedd → `UCPNokRZ9hacjIQ3IQL6HNUQ`
+
+Los cinco últimos se agregaron el 2026-08-30 (ver `infra/APPROVALS.md`); la validación de `infra/variables.tf` pasó de `== 5` a `>= 1 && <= 20`.
+
+**Configurados no es lo mismo que respondibles.** Al 2026-09-05 solo 7 tienen comentarios en `gold_rag_corpus` — Third Party, Porter Robinson y DubVision no han producido ninguno, probablemente por no tener videos en la ventana de 7 días. La bienvenida del agente de Fase 2 lista los 7 con datos, no los 10 configurados: anunciar un DJ del que no hay nada que responder es prometer lo que no existe.
 
 ---
 

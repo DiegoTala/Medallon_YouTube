@@ -17,7 +17,7 @@ Hay **dos PRD independientes**: `docs/PRD.md` (pipeline medallón, Fase 1) y `do
 | Cambia el costo real observado de forma sostenida | `docs/PRD.md` §6 | Actualizar la tabla de costo estimado, sin borrar los valores originales de diseño (agregar nota de "costo real observado desde <fecha>"). |
 | Se agrega/quita un skill del arnés | `CLAUDE.md` y `AGENTS.md` (tabla de skills) | Mantener la tabla de "cuándo usar qué skill" en sync con `.claude/skills/`. |
 | Se aprueba y ejecuta un cambio de infraestructura | `infra/APPROVALS.md` | Ya cubierto por [[approval-gate]] — este skill no duplica ese registro. |
-| Cambia el alcance del proyecto (ej. más de 5 canales) | `docs/PRD.md` §1/§2 | Requiere confirmación explícita del usuario antes de editar — el alcance no se autoactualiza. |
+| Cambia el alcance del proyecto (ej. cambia el número de canales) | `docs/PRD.md` §1/§2 | Requiere confirmación explícita del usuario antes de editar — el alcance no se autoactualiza. |
 | Cambia el contrato de `gold_rag_corpus` | `docs/PRD_Fase2.md` §8 **y** `docs/PRD.md` | Es la frontera entre fases: un cambio de esquema afecta a quien lo escribe y a quien lo lee. Ver [[gold-rag-corpus]]. |
 | Se activa la ruta de contingencia de autenticación | `docs/PRD_Fase2.md` §11 | Obligatorio **antes** de implementarla — es un cambio de arquitectura. Ver [[rag-iap-auth]]. |
 | Cambia una cuota, un límite o el techo de costo | `docs/PRD_Fase2.md` §12/§15 y [[cost-guardrail]] | El techo vive en `cost-guardrail`; el PRD registra la autorización y su fecha. |

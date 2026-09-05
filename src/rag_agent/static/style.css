@@ -59,6 +59,26 @@ body {
     margin-top: 2px;
 }
 
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logout-link {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+}
+
+.logout-link:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
+}
+
 .quota-display {
     font-size: 0.8rem;
     color: var(--text-muted);
@@ -114,6 +134,78 @@ body {
     color: var(--text-muted);
     font-size: 0.9rem;
     max-width: 90%;
+}
+
+/* La bienvenida es un bloque de lectura, no un aviso: alineada a la
+   izquierda y más ancha que el resto de los mensajes del sistema. */
+#welcome {
+    text-align: left;
+    max-width: 100%;
+    line-height: 1.55;
+}
+
+#welcome .greeting {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 8px;
+}
+
+#welcome .cap-heading {
+    margin-top: 14px;
+    color: var(--text);
+}
+
+.capabilities {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+}
+
+.capabilities li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 0;
+}
+
+.cap-title {
+    color: var(--text);
+    font-weight: 500;
+}
+
+.cap-title::before {
+    content: "· ";
+    color: var(--text-muted);
+}
+
+/* Los ejemplos rellenan el textarea al hacer clic. */
+.example {
+    font: inherit;
+    font-style: italic;
+    color: var(--text-muted);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 3px 10px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.example:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
+}
+
+#welcome .djs {
+    margin-top: 14px;
+    color: var(--text);
+}
+
+#welcome .quota-note {
+    margin-top: 12px;
+    font-size: 0.82rem;
 }
 
 .message.error {

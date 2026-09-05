@@ -48,16 +48,44 @@ def collect_tool_payloads(event: Any) -> list[tuple[str, dict]]:
     return payloads
 
 
-def valid_comment_ids(tool_payloads: Iterable[tuple[str, dict]]) -> set[str]:
-    """Reúne los comment_id que las herramientas devolvieron realmente."""
-    ids: set[str] = set()
+# Campos que viajan a la UI y al historial por cada cita. Son los que
+# rag-synthesis-citations exige para el formato
+# [comment_id · "título del video" · canal · fecha · URL].
+CAMPOS_CITA = (
+    "comment_id",
+    "video_title",
+    "channel_name",
+    "video_url",
+    "comment_published_at",
+)
+
+
+def evidence_index(tool_payloads: Iterable[tuple[str, dict]]) -> dict[str, dict]:
+    """Indexa por comment_id los resultados REALES de las herramientas.
+
+    Es a la vez la evidencia contra la que se validan las citas y la fuente de
+    su metadata: la cita que se le entrega a la UI se arma con esta fila, nunca
+    con lo que el modelo escribió. El modelo elige QUÉ citar; de CÓMO se ve esa
+    cita se encarga el código.
+    """
+    index: dict[str, dict] = {}
     for _name, payload in tool_payloads:
         if payload.get("status") != "success":
             continue
         for row in payload.get("results") or []:
-            if isinstance(row, dict) and row.get("comment_id"):
-                ids.add(str(row["comment_id"]))
-    return ids
+            if not isinstance(row, dict) or not row.get("comment_id"):
+                continue
+            cid = str(row["comment_id"])
+            index.setdefault(cid, {
+                campo: ("" if row.get(campo) is None else str(row[campo]))
+                for campo in CAMPOS_CITA
+            })
+    return index
+
+
+def valid_comment_ids(tool_payloads: Iterable[tuple[str, dict]]) -> set[str]:
+    """Reúne los comment_id que las herramientas devolvieron realmente."""
+    return set(evidence_index(tool_payloads))
 
 
 def extract_cited_ids(response_text: str) -> set[str]:
@@ -68,31 +96,35 @@ def extract_cited_ids(response_text: str) -> set[str]:
 def validate_citations(
     response_text: str,
     tool_payloads: Iterable[tuple[str, dict]],
-) -> tuple[bool, list[str], list[str]]:
+) -> tuple[bool, list[dict], list[str]]:
     """Verifica que toda cita corresponda a un resultado real de herramienta.
 
     Returns:
-        (ok, citas_validas, citas_inventadas). `ok` es False solo cuando hay al
-        menos una cita que no existe en los resultados: una respuesta sin citas
-        (p. ej. "no hay datos sobre eso") es válida — que falten citas donde
-        debería haberlas es un problema de calidad que mide rag-evaluation-suite,
-        no una alucinación que debamos bloquear aquí.
+        (ok, citas, citas_inventadas), donde `citas` son objetos con la
+        metadata real de cada comentario citado — listos para la UI y para el
+        historial — y `citas_inventadas` son los identificadores citados que no
+        existen en ningún resultado.
+
+        `ok` es False solo cuando hay al menos una cita inventada. Una
+        respuesta sin citas (p. ej. "no hay datos sobre eso") es válida:
+        admitir ausencia de evidencia es la conducta correcta. Que falten citas
+        donde debería haberlas es calidad, y eso lo mide rag-evaluation-suite.
     """
     payloads = list(tool_payloads)
-    reales = valid_comment_ids(payloads)
+    index = evidence_index(payloads)
     citadas = extract_cited_ids(response_text)
 
-    validas = sorted(citadas & reales)
-    inventadas = sorted(citadas - reales)
+    citas = [index[cid] for cid in sorted(citadas & set(index))]
+    inventadas = sorted(citadas - set(index))
 
     if inventadas:
         logger.error(
             "Citas sin evidencia: %s (reales disponibles: %d)",
             inventadas,
-            len(reales),
+            len(index),
         )
 
-    return (not inventadas), validas, inventadas
+    return (not inventadas), citas, inventadas
 
 
 def tools_used(tool_payloads: Iterable[tuple[str, dict]]) -> list[str]:

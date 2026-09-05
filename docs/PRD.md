@@ -12,7 +12,7 @@
 
 ## 1. Resumen Ejecutivo y Objetivos
 
-El presente documento de diseño de producto (PDR) define la arquitectura técnica y el pipeline de datos para la ingesta, validación, procesamiento, análisis de sentimiento y búsqueda semántica de contenidos publicados en YouTube por una lista acotada de **5 canales de DJs**.
+El presente documento de diseño de producto (PDR) define la arquitectura técnica y el pipeline de datos para la ingesta, validación, procesamiento, análisis de sentimiento y búsqueda semántica de contenidos publicados en YouTube por una lista acotada de **10 canales de DJs**.
 
 El objetivo principal es proveer analítica avanzada sobre los comentarios de los videos lanzados en la última semana, categorizando el sentimiento mediante **Vertex AI Gemini** y ofreciendo capacidades de búsqueda vectorial semántica directamente en **BigQuery Vector Search**. Todo el pipeline se diseña bajo strictly criterios de idempotencia, arquitectura serverless con contenedores y un techo presupuestario operativo inferior a **$15 USD mensuales**.
 
@@ -20,7 +20,7 @@ El objetivo principal es proveer analítica avanzada sobre los comentarios de lo
 
 ## 2. Especificaciones de Ingesta y Alcance de Datos
 
-* **Unidades de Selección:** 5 canales objetivo de DJs de música electrónica/dance.
+* **Unidades de Selección:** 10 canales objetivo de DJs de música electrónica/dance, configurados en `infra/terraform.tfvars` (nunca en el código).
 * **Frecuencia de Carga:** Batch semanal (ejecutado cada lunes a las 02:00 UTC).
 * **Ventana Temporal de Ingesta:** Videos publicados dentro de los últimos 7 días ($T - 7 \text{ días}$).
 * **Atributos Extraídos por Video:** Video ID, Título, Descripción, Fecha de Publicación, Idioma predeterminado, Canal Propietario, Duración, Vista (Views), Me Gusta (Likes).
@@ -285,7 +285,7 @@ class YouTubeCommentSchema(BaseModel):
 
 ### Presupuesto Operativo Estimado (Máximo $15.00 USD / Mes)
 
-Para un escenario de 5 canales de DJs procesando aproximadamente ~2,500 comentarios al mes (~125 comentarios semanales en promedio, considerando que solo se ingieren videos de los últimos 7 días):
+Para un escenario de 10 canales de DJs procesando aproximadamente ~2,500 comentarios al mes (~125 comentarios semanales en promedio, considerando que solo se ingieren videos de los últimos 7 días):
 
 * **Cloud Scheduler:** $0.00 USD (Dentro de la cuota gratuita).
 * **Cloud Run Jobs:** ~$0.15 USD (Ejecución semanal de < 3 minutos).
@@ -325,6 +325,6 @@ El estado de Terraform se almacena en un bucket GCS remoto con versionado habili
 
 | Riesgo Identificado | Impacto | Mitigación Implementada |
 | :--- | :--- | :--- |
-| **Exceso de cuota en API de YouTube** | Medio | Límite estricto a 5 canales y paginado máximo de 100 elementos por query. |
+| **Exceso de cuota en API de YouTube** | Medio | Límite estricto de 20 canales (validación en `infra/variables.tf`; hoy 10 configurados) y paginado máximo de 100 elementos por query. |
 | **Sobrecosto inesperado en Vertex AI** | Alto | Filtro incremental SQL para procesar únicamente comentarios nuevos que no existan en la tabla Gold. |
 | **Fallo en esquema de origen (Breakage)** | Bajo | Captura automática en `silver_dead_letter_queue` mediante Pydantic sin detener el pipeline. |

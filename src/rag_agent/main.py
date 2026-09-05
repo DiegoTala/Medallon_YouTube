@@ -30,7 +30,7 @@ from google.cloud import bigquery, firestore
 from google.genai import types
 
 from rag_agent.agents.orchestrator import MODEL, build_agent_pipeline
-from rag_agent.middleware.auth import authenticate
+from rag_agent.middleware.auth import authenticate, authenticate_identity, display_name
 from rag_agent.middleware.cache import get_cached_response, store_response
 from rag_agent.middleware.citations import (
     MENSAJE_DEGRADADO,
@@ -38,8 +38,9 @@ from rag_agent.middleware.citations import (
     tools_used,
     validate_citations,
 )
-from rag_agent.middleware.quota import check_daily_quota, check_rate_limit
+from rag_agent.middleware.quota import DAILY_QUOTA, check_daily_quota, check_rate_limit, get_quota_remaining
 from rag_agent.middleware.sanitize import sanitize
+from rag_agent.catalog import get_available_channels
 from rag_agent.memory.common_queries import record_query
 from rag_agent.memory.session import create_session, get_recent_sessions, load_session_messages, save_message
 from rag_agent.versions import PROMPT_VERSION, get_corpus_version
@@ -76,6 +77,56 @@ runner = Runner(
 async def health() -> PlainTextResponse:
     """Healthcheck sin costo — no consulta BigQuery ni Vertex AI."""
     return PlainTextResponse("ok")
+
+
+# Lo que el agente sabe hacer, uno por herramienta. Vive aquí y no en el HTML
+# para que la UI no pueda prometer una capacidad que el backend no tiene.
+CAPACIDADES = [
+    {
+        "titulo": "Buscar qué dice la gente",
+        "ejemplo": "¿Qué opinan de los drops de Martin Garrix?",
+    },
+    {
+        "titulo": "Analizar sentimiento",
+        "ejemplo": "¿Cómo es el sentimiento de ILLENIUM comparado con Alesso?",
+    },
+    {
+        "titulo": "Detectar tendencias",
+        "ejemplo": "¿Cambió la reacción a Avicii en agosto contra julio?",
+    },
+]
+
+DESCRIPCION = (
+    "Soy un agente de análisis de comentarios de YouTube. Trabajo sobre los "
+    "comentarios que el público deja en los canales de estos DJs: los busco, "
+    "los analizo y te respondo solo con lo que dicen, citando siempre de dónde "
+    "salió cada cosa. No opino ni relleno con conocimiento general — si no hay "
+    "datos, te lo digo."
+)
+
+
+@app.get("/welcome")
+async def welcome(request: Request) -> JSONResponse:
+    """Datos de la pantalla de bienvenida.
+
+    NO consume cuota diaria: no invoca al Router ni a Vertex AI. Gastar una de
+    las 30 consultas del día por cargar la página sería cobrarle al usuario por
+    leer el menú. La cuota se lee con get_quota_remaining(), que no incrementa.
+    """
+    sub, email = authenticate_identity(request)
+
+    canales = get_available_channels(bq_client, GCP_PROJECT, GOLD_DATASET)
+    restantes = get_quota_remaining(db, sub)
+
+    return JSONResponse(content={
+        "nombre": display_name(email),
+        "descripcion": DESCRIPCION,
+        "capacidades": CAPACIDADES,
+        # Solo los canales CON comentarios: los 10 configurados en Fase 1 no
+        # son los que se pueden responder.
+        "djs": [c["channel_name"] for c in canales],
+        "cuota": {"restantes": restantes, "limite": DAILY_QUOTA},
+    })
 
 
 @app.get("/", response_class=HTMLResponse)

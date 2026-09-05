@@ -1,13 +1,13 @@
 ---
 name: bronze-ingestion-videos
-description: Cómo extraer metadatos de videos (no comentarios) de los 5 canales de DJs vía YouTube Data API v3 y persistirlos como JSON Lines inmutable en GCS. Úsalo al escribir o modificar el paso de ingesta de videos del Cloud Run Job.
+description: Cómo extraer metadatos de videos (no comentarios) de los canales de DJs configurados vía YouTube Data API v3 y persistirlos como JSON Lines inmutable en GCS. Úsalo al escribir o modificar el paso de ingesta de videos del Cloud Run Job.
 ---
 
 # bronze-ingestion-videos
 
 ## Alcance
 
-Extraer, por cada uno de los 5 canales configurados, los videos publicados en los últimos 7 días ($T-7$) y escribirlos **tal cual los devuelve la API** (sin transformar) a GCS. La validación de esquema ocurre después, en [[silver-validation-videos]] — esta capa nunca rechaza ni transforma datos.
+Extraer, por cada uno de los canales configurados (10 al 2026-09-05), los videos publicados en los últimos 7 días ($T-7$) y escribirlos **tal cual los devuelve la API** (sin transformar) a GCS. La validación de esquema ocurre después, en [[silver-validation-videos]] — esta capa nunca rechaza ni transforma datos.
 
 ## Atributos a extraer (PRD §2)
 
@@ -78,7 +78,7 @@ def write_bronze_jsonl(records: list[dict], bucket, batch_date: datetime, batch_
 
 - **Inmutable:** una vez escrito, un archivo bronze nunca se sobreescribe ni edita; una re-ejecución del mismo día genera un nuevo archivo o se anexa, nunca reemplaza el histórico. Se garantiza incluyendo `batch_execution_id` en el nombre del archivo (no solo la partición por fecha, que por sí sola no es suficiente para distinguir dos corridas el mismo día).
 - **Sin validación aquí:** no se descarta ningún registro en esta capa, ni siquiera si luce corrupto — eso es trabajo de [[silver-validation-videos]] / [[silver-dead-letter-queue]].
-- **Límite de canales:** exactamente 5 canales, configurados fuera del código (variable de entorno o tabla de configuración), nunca hardcodeados en el script.
+- **Límite de canales:** entre 1 y 20, validado en `infra/variables.tf`; hoy 10. Siempre configurados fuera del código (`infra/terraform.tfvars`), nunca hardcodeados en el script. El número no es parte del contrato de este skill — leerlo del tfvars, no de aquí.
 
 ## Relación con otros skills
 

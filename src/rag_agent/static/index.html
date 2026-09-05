@@ -13,16 +13,32 @@
                 <h1>YouTube DJ Analytics</h1>
                 <p class="subtitle">Consulta comentarios y tendencias de DJs en YouTube</p>
             </div>
-            <div class="quota-display">
-                <span id="quota-text">Consultas hoy: 0/30</span>
+            <div class="header-actions">
+                <div class="quota-display">
+                    <!-- El número real llega de /welcome al cargar; este texto
+                         es solo el estado mientras responde. Antes decía
+                         "0/30" fijo y parecía que la cuota se reiniciaba en
+                         cada refresh. -->
+                    <span id="quota-text">Consultas hoy: —</span>
+                </div>
+                <!-- Cierra la sesión de IAP para ESTA app. No cierra la
+                     sesión de Google: si sigue viva, IAP reautentica en
+                     silencio al volver a entrar, y eso es correcto aunque
+                     parezca que no funcionó.
+                     La pantalla de confirmación la sirve IAP, no nosotros —
+                     cualquier página propia está detrás de IAP y pedirla
+                     volvería a disparar el login. -->
+                <a class="logout-link" href="/?gcp-iap-mode=CLEAR_LOGIN_COOKIE"
+                   title="Cierra la sesión de esta aplicación">Cerrar sesión</a>
             </div>
         </header>
 
         <main class="chat-container">
             <div id="messages" class="messages">
-                <div class="message system">
-                    <p>Haz una pregunta sobre los comentarios de YouTube de DJs. Puedo buscar semánticamente, analizar sentimiento o detectar tendencias.</p>
-                </div>
+                <!-- La bienvenida la arma app.js con lo que devuelve
+                     /welcome: el saludo, las capacidades y los DJs que
+                     realmente tienen comentarios en el corpus. -->
+                <div id="welcome" class="message system" hidden></div>
             </div>
         </main>
 
@@ -30,7 +46,7 @@
             <div class="input-wrapper">
                 <textarea
                     id="query-input"
-                    placeholder="Ejemplo: ¿Qué opinan del último set de DJ Tiësto?"
+                    placeholder="Ejemplo: ¿Qué opinan de los drops de Martin Garrix?"
                     rows="1"
                     maxlength="500"
                 ></textarea>

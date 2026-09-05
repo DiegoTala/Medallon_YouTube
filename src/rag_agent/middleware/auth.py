@@ -18,6 +18,17 @@ SERVICE_NAME = "rag-chat-service"
 IAP_AUDIENCE = f"/projects/{PROJECT_NUMBER}/locations/{REGION}/services/{SERVICE_NAME}"
 IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
 
+# Nombre visible para el saludo de /welcome. Mapa explícito y no heurística:
+# son tres identidades conocidas, y derivar el nombre de la parte local del
+# correo produce "Medallon Rag Test01". El fallback existe para no romper si se
+# agrega una identidad y se olvida el nombre.
+DISPLAY_NAMES = {
+    "diego@talamantes.com.mx": "Diego",
+    "medallon.rag.test01@talamantes.com.mx": "Usuario de prueba 1",
+    "medallon.rag.test02@talamantes.com.mx": "Usuario de prueba 2",
+    "rag-backend-sa@medallon-youtube.iam.gserviceaccount.com": "Evaluación automatizada",
+}
+
 ALLOWED_EMAILS = frozenset({
     "diego@talamantes.com.mx",
     "medallon.rag.test01@talamantes.com.mx",
@@ -28,11 +39,16 @@ ALLOWED_EMAILS = frozenset({
 })
 
 
-def authenticate(request: Request) -> str:
-    """Verifica el JWT de IAP y devuelve el sub del usuario.
+def authenticate_identity(request: Request) -> tuple[str, str]:
+    """Verifica el JWT de IAP y devuelve (sub, email).
+
+    El `sub` es lo que identifica al usuario en todo el sistema: cuota diaria,
+    historial y caché van indexados por él. El email se usa SOLO para mostrar
+    (el saludo de /welcome) — nunca como clave, porque un cambio de correo
+    huerfanaría la memoria y reiniciaría los contadores.
 
     Returns:
-        str: El identificador estable del usuario (claims.sub).
+        tuple[str, str]: (claims.sub, claims.email)
 
     Raises:
         HTTPException 401: Si falta la aserción o es inválida.
@@ -56,4 +72,19 @@ def authenticate(request: Request) -> str:
     if email not in ALLOWED_EMAILS:
         raise HTTPException(status_code=403, detail="Identidad no autorizada")
 
-    return claims["sub"]
+    return claims["sub"], email
+
+
+def authenticate(request: Request) -> str:
+    """Verifica el JWT de IAP y devuelve el sub del usuario.
+
+    Envoltura de authenticate_identity para el resto de la cadena, que solo
+    necesita el identificador.
+    """
+    sub, _email = authenticate_identity(request)
+    return sub
+
+
+def display_name(email: str) -> str:
+    """Nombre visible para el saludo. Nunca es la clave de nada."""
+    return DISPLAY_NAMES.get(email) or (email.split("@")[0] if email else "")

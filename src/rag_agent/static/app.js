@@ -4,8 +4,10 @@
     const messages = document.getElementById('messages');
     const sendBtn = document.getElementById('send-btn');
     const quotaText = document.getElementById('quota-text');
+    const welcomeBox = document.getElementById('welcome');
 
-    let quotaRemaining = 30;
+    let quotaLimit = 30;
+    let quotaRemaining = null;
 
     function autoResize() {
         input.style.height = 'auto';
@@ -68,9 +70,59 @@
         return div.innerHTML;
     }
 
-    function updateQuota(remaining) {
+    // escapeHtml no escapa comillas, así que no sirve dentro de un atributo:
+    // un valor con " cerraría el atributo antes de tiempo.
+    function escapeAttr(str) {
+        return escapeHtml(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function updateQuota(remaining, limit) {
+        if (limit !== undefined) quotaLimit = limit;
         quotaRemaining = remaining;
-        quotaText.textContent = `Consultas hoy: ${30 - remaining}/30`;
+        quotaText.textContent = `Consultas hoy: ${quotaLimit - remaining}/${quotaLimit}`;
+    }
+
+    // La bienvenida se arma con lo que devuelve /welcome. Los DJs no se
+    // escriben aquí: son los que tienen comentarios en el corpus, y cambian
+    // solos cuando el pipeline alcanza un canal nuevo.
+    async function loadWelcome() {
+        try {
+            const res = await fetch('/welcome');
+            if (!res.ok) return;
+            const d = await res.json();
+
+            updateQuota(d.cuota.restantes, d.cuota.limite);
+
+            const ejemplos = d.capacidades.map(c => `
+                <li>
+                    <span class="cap-title">${escapeHtml(c.titulo)}</span>
+                    <button type="button" class="example" data-q="${escapeAttr(c.ejemplo)}">${escapeHtml(c.ejemplo)}</button>
+                </li>`).join('');
+
+            const djs = d.djs.length
+                ? `<p class="djs"><strong>DJs disponibles:</strong> ${d.djs.map(escapeHtml).join(' · ')}</p>`
+                : '';
+
+            welcomeBox.innerHTML = `
+                <p class="greeting">Hola, ${escapeHtml(d.nombre)}.</p>
+                <p>${escapeHtml(d.descripcion)}</p>
+                <p class="cap-heading"><strong>Qué puedes preguntarme</strong></p>
+                <ul class="capabilities">${ejemplos}</ul>
+                ${djs}
+                <p class="quota-note">Tienes ${d.cuota.limite} consultas al día.</p>`;
+            welcomeBox.hidden = false;
+
+            welcomeBox.querySelectorAll('.example').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    input.value = btn.dataset.q;
+                    autoResize();
+                    input.focus();
+                });
+            });
+        } catch (err) {
+            // Sin bienvenida se puede preguntar igual; no vale la pena
+            // bloquear la UI por el saludo.
+        }
     }
 
     function setLoading(loading) {
@@ -128,4 +180,5 @@
     });
 
     input.focus();
+    loadWelcome();
 })();
