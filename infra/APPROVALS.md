@@ -256,3 +256,82 @@ describe la ruta de consola.
 - El primer build con `gcloud builds submit --tag=` usó el `Dockerfile` del pipeline (Fase 1) por defecto — corregido con `--config=cloudbuild.rag.yaml`.
 - IAP puede tardar unos minutos en propagarse. Verificación pendiente con las 3 identidades.
 - El set de evaluación (15 doradas + 10 adversariales) debe ejecutarse contra el servicio real una vez IAP esté activo.
+
+## 2026-09-05T12:21:00-06:00 — rag-terraform-root — fase2-indices-firestore-e-iap
+
+> **Registro diferido.** Esta entrada y las cuatro siguientes documentan applies ejecutados el 2026-09-05 durante la depuración de IAP y Firestore, que se aplicaron con aprobación de Diego en el chat pero cuyo registro quedó pendiente. Se anexan aquí el mismo día, reconstruidos desde los planes guardados y el estado real verificado con `gcloud`. El retraso en el registro es en sí una desviación de `approval-gate` paso 4.
+
+- **Recurso(s):** `google_firestore_index.{sessions_created_at, messages_timestamp, common_queries_count}`, `google_cloud_run_v2_service_iam_binding.iap_invoker`, `google_iap_web_cloud_run_service_iam_binding.rag_access`.
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `terraform -chdir=infra/fase2 apply tfplan_indexes`
+- **Costo estimado incremental:** $0.00 USD/mes (índices Firestore sobre <1 MB de datos; bindings IAM no facturan).
+- **Costo total estimado tras el cambio:** ~$2.85 – $6.35 / $20.00 USD (sin cambio)
+- **¿Contiene datos / requirió backup?:** No — creación de índices y bindings.
+- **Aprobado por:** Diego (verbatim: "Apruebo el plan!")
+- **Ejecutado:** sí. Los tres índices compuestos son los que exigen las consultas de memoria (filtro de rango sobre `expires_at` + `order_by` sobre otro campo). Definiciones tomadas de la URL que genera el propio Firestore en el error "query requires an index", no de la intuición.
+
+## 2026-09-05T12:30:00-06:00 — rag-terraform-root — fase2-iap-resource-correcto
+
+- **Recurso(s):** `google_iap_web_cloud_run_service_iam_binding.rag_access` (reemplaza a `google_iap_web_backend_service_iam_binding`).
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `terraform -chdir=infra/fase2 apply tfplan_iap_fix`
+- **Costo estimado incremental:** $0.00 USD/mes
+- **Costo total estimado tras el cambio:** ~$2.85 – $6.35 / $20.00 USD (sin cambio)
+- **¿Contiene datos / requirió backup?:** No.
+- **Aprobado por:** Diego (continuación del mismo ciclo de aprobación: "Apruebo el plan!")
+- **Ejecutado:** sí. **Causa del cambio:** `google_iap_web_backend_service_iam_binding` es para IAP detrás de un Load Balancer; con IAP nativo de Cloud Run devolvía 404. El recurso correcto es `google_iap_web_cloud_run_service_iam_binding`. Se aplicó junto con el cambio de `ingress` a `INGRESS_TRAFFIC_ALL` en `cloud_run.tf` (con `INTERNAL_LOAD_BALANCER` el endpoint `run.app` también daba 404).
+
+## 2026-09-05T12:42:00-06:00 — rag-terraform-root — fase2-iam-evaluacion
+
+- **Recurso(s):** `google_service_account_iam_member.diego_token_creator` (`roles/iam.serviceAccountTokenCreator`, Diego → `rag-backend-sa`), binding `roles/run.invoker` para `rag-backend-sa`.
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `terraform -chdir=infra/fase2 apply tfplan_eval_iam`
+- **Costo estimado incremental:** $0.00 USD/mes
+- **Costo total estimado tras el cambio:** ~$2.85 – $6.35 / $20.00 USD (sin cambio)
+- **¿Contiene datos / requirió backup?:** No.
+- **Aprobado por:** Diego (verbatim: "Apruebo")
+- **Ejecutado:** sí. Precondición de `rag-evaluation-suite`: la evaluación automatizada necesita firmar un JWT como `rag-backend-sa` para pasar IAP. **Nota de seguridad:** este binding le da a Diego capacidad de impersonar la SA del backend; es aceptable porque Diego ya es owner del proyecto, pero debe retirarse si alguna vez se reduce su rol.
+
+## 2026-09-05T12:54:00-06:00 — rag-terraform-root — fase2-sa-en-allowlist-iap
+
+- **Recurso(s):** `google_iap_web_cloud_run_service_iam_binding.rag_access` (agrega `serviceAccount:rag-backend-sa@…` a `members`); se retira el binding `run.invoker` para la SA por conflicto con IAP.
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `terraform -chdir=infra/fase2 apply tfplan_iap_sa`
+- **Costo estimado incremental:** $0.00 USD/mes
+- **Costo total estimado tras el cambio:** ~$2.85 – $6.35 / $20.00 USD (sin cambio)
+- **¿Contiene datos / requirió backup?:** No.
+- **Aprobado por:** Diego (continuación del mismo ciclo: "Apruebo")
+- **Ejecutado:** sí. **Cambia quién puede entrar al sistema:** la allowlist de IAP pasa de 3 identidades humanas a 3 humanas + 1 service account (la de evaluación). La SA está también en `ALLOWED_EMAILS` del código (`src/rag_agent/middleware/auth.py`). Consume su propia cuota de 30 consultas/día; una corrida completa de evaluación usa 25.
+
+## 2026-09-05T13:19:00-06:00 — rag-terraform-root — fase2-indice-messages-asc
+
+- **Recurso(s):** `google_firestore_index.messages_timestamp` (reemplazo: `expires_at` DESCENDING → ASCENDING) + update del Cloud Run Service.
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `terraform -chdir=infra/fase2 apply tfplan_msg_index`
+- **Costo estimado incremental:** $0.00 USD/mes
+- **Costo total estimado tras el cambio:** ~$2.85 – $6.35 / $20.00 USD (sin cambio)
+- **¿Contiene datos / requirió backup?:** No — el índice se reconstruye, los documentos no se tocan.
+- **Aprobado por:** Diego (continuación del mismo ciclo: "Apruebo")
+- **Ejecutado:** sí. **Aprendizaje:** el orden de `expires_at` en un índice compuesto lo determina Firestore según la consulta, no la simetría con los otros índices. `sessions` y `common_queries` van DESC; `messages` va ASC porque su `order_by` es `timestamp ASC`. La fuente correcta es siempre la URL que Firestore devuelve en el error "query requires an index".
+
+## 2026-09-05T13:30:00-06:00 — rag-deploy-service — fase2-builds-fix1-a-fix4
+
+> **Registro diferido**, mismo caso que las cinco entradas anteriores.
+
+- **Recurso(s):** Cloud Run Service `rag-chat-service`, revisiones `00003` a `00006-j67`; imágenes `rag-agent:7cae04b-fix1` … `:7cae04b-fix4` en Artifact Registry.
+- **Raíz Terraform:** N/A — `gcloud builds submit` + `gcloud run deploy` (fuera de Terraform; es el origen del drift que se corrige en la entrada del 2026-09-05T14:30).
+- **Comando:** `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=7cae04b-fixN` + `gcloud run deploy rag-chat-service --image=…:7cae04b-fixN --region=us-central1`, cuatro veces.
+- **Costo estimado incremental:** $0.00 USD/mes (mismo servicio; ~4 builds × <1 min de Cloud Build, dentro del nivel gratuito).
+- **Costo total estimado tras el cambio:** ~$2.85 – $6.35 / $20.00 USD (sin cambio)
+- **¿Contiene datos / requirió backup?:** No.
+- **Aprobado por:** Diego (verbatim, cubriendo el ciclo de depuración: "Adelante, apruebo el costo. Cualquier cosa rara o cambio extra que se requiera me vuelves a preguntar")
+- **Ejecutado:** sí. Qué corrigió cada iteración:
+  - `fix1` — `firestore.Client(database="rag-memory")`; el default apuntaba a `(default)`, que no existe → 404.
+  - `fix2` — `GOLD_DATASET` de `youtube_gold` a `gold`.
+  - `fix3` — `Gemini(..., client_kwargs={"vertexai": True, "project": …, "location": …})`. Sin `vertexai=True` ADK usa la API de AI Studio y falla con "No API key was provided"; con `project`/`location` pero sin la bandera falla con "Gemini API does not support project/location".
+  - `fix4` — se pasa `GCP_REGION` a `build_agent_pipeline`.
+- **APIs habilitadas en el proceso:** `cloudresourcemanager.googleapis.com` (requerida por IAP IAM), `compute.googleapis.com`.
+- **Brand OAuth:** creado (cliente administrado por Google; las tres identidades son del dominio `talamantes.com.mx`, así que no se requirió brand externo). **Cambia quién puede entrar al sistema** — se registra aquí aunque sea un paso manual de consola, según `rag-terraform-root`.
+- **Verificación:** Diego validó acceso en navegador con las 3 identidades y el rechazo de una 4ta cuenta no autorizada.
+
+**Estado al cierre de estas seis entradas:** el servicio respondía HTTP 200 y el pipeline de agentes funcionaba, pero `semantic_search` fallaba. Ver la entrada siguiente.

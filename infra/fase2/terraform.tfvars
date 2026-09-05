@@ -1,1 +1,1 @@
-rag_image_tag = "7cae04b-fix3"
+rag_image_tag = "65036a4"
