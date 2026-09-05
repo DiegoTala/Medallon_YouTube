@@ -36,13 +36,47 @@ def test_prohibe_nombrar_a_los_otros_agentes():
         )
 
 
-def test_el_ejemplo_de_cita_esta_relleno_no_es_plantilla():
-    """El modelo emitió '(canal, periodo actual vs base, evidence_level)' tal
-    cual, con las palabras marcador. Un ejemplo con valores reales evita que
-    copie el molde."""
-    assert "UgzlIhIYGiHMQk5ZElV4AaABAg" in SYNTHESIS_INSTRUCTION
-    assert "n=1869" in SYNTHESIS_INSTRUCTION
-    assert "es un ERROR" in SYNTHESIS_INSTRUCTION
+def test_el_prompt_no_contiene_cifras_concretas():
+    """Un ejemplo con valores realistas se copia a las respuestas.
+
+    Se puso "(Martin Garrix, todo el histórico, n=1869)" como ejemplo para
+    evitar que el modelo emitiera los marcadores literales. El modelo entonces
+    reportó "ILLENIUM (n=1869)" — con ILLENIUM en 292 comentarios. El ejemplo
+    se volvió la fuente del error, y la respuesta salió convincente: traía su
+    advertencia sobre tamaños de muestra y las cifras eran falsas.
+
+    La lección: en un prompt, un número concreto es una sugerencia de qué
+    escribir. Los marcadores van sin rellenar, y quien impide que se copien es
+    validate_numeric_claims, no una frase."""
+    # El tope de tokens es la única cifra legítima: no es un dato del corpus y
+    # el modelo no la puede confundir con uno.
+    sin_tope = re.sub(r"[\d.]+ tokens", "", SYNTHESIS_INSTRUCTION)
+    sobrantes = re.findall(r"\b\d{3,}\b", sin_tope)
+    assert not sobrantes, (
+        f"cifras candidatas a filtrarse a una respuesta: {sobrantes}"
+    )
+
+
+def test_advierte_de_los_dos_errores_opuestos():
+    """Emitir el marcador e inventar el valor son fallas opuestas: corregir una
+    sin nombrar la otra produce la contraria."""
+    assert "Escribir los marcadores tal cual" in SYNTHESIS_INSTRUCTION
+    assert "inventar un valor que suene plausible" in SYNTHESIS_INSTRUCTION.lower()
+
+
+def test_declara_que_las_cifras_se_verifican_en_codigo():
+    assert "se verifican en código" in SYNTHESIS_INSTRUCTION
+
+
+def test_niega_las_metricas_que_no_existen():
+    """Inventó una 'puntuación de sentimiento de 0.76'. Esa herramienta
+    devuelve distribuciones de etiquetas, no puntuaciones."""
+    assert "puntuación de sentimiento" in SYNTHESIS_INSTRUCTION
+
+
+def test_responde_solo_lo_que_se_pregunto():
+    """Calculó una tendencia agosto vs julio que nadie pidió."""
+    assert "Responde SOLO lo que se preguntó" in SYNTHESIS_INSTRUCTION
 
 
 def test_sigue_admitiendo_la_ausencia_de_evidencia():

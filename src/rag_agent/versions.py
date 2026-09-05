@@ -36,7 +36,11 @@ logger = logging.getLogger("rag_agent.versions")
 #   {analytics_result?} como variables de estado, no como palabras sueltas.
 #   Prohibido nombrar agentes, ejemplo de cita con valores reales, y el
 #   search_agent distingue "no hay datos" de "nada suficientemente cercano".
-PROMPT_VERSION = "2026-09-05.4"
+# 2026-09-05.5 — sin cifras concretas en el prompt de síntesis (el ejemplo
+#   "n=1869" se filtró a una respuesta real), campos numéricos declarados,
+#   search_agent manda la pregunta completa en vez de keywords, y
+#   trend_detection solo corre bajo petición explícita.
+PROMPT_VERSION = "2026-09-05.5"
 
 # ── Versión del corpus ────────────────────────────────────────────────────
 #

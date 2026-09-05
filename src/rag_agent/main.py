@@ -34,10 +34,12 @@ from rag_agent.middleware.auth import authenticate_identity, display_name
 from rag_agent.middleware.cache import get_cached_response, store_response
 from rag_agent.middleware.citations import (
     MENSAJE_DEGRADADO,
+    MENSAJE_NUMEROS,
     collect_tool_payloads,
     es_cacheable,
     tools_used,
     validate_citations,
+    validate_numeric_claims,
 )
 from rag_agent.middleware.quota import (
     DAILY_QUOTA,
@@ -53,6 +55,15 @@ from rag_agent.tools.evidence import WEAK_BELOW
 from rag_agent.memory.common_queries import record_query
 from rag_agent.memory.session import create_session, get_recent_sessions, load_session_messages, save_message
 from rag_agent.versions import PROMPT_VERSION, get_corpus_version
+
+# Sin esto, ningún logger del proyecto emite: los diagnósticos que se
+# escribieron para calibrar el umbral de relevancia y para registrar citas
+# inventadas nunca llegaron a Cloud Logging. Un log que no se escribe es peor
+# que no tenerlo, porque uno cree que lo tiene.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(levelname)s %(name)s %(message)s",
+)
 
 logger = logging.getLogger("rag_agent")
 
@@ -339,18 +350,28 @@ async def chat(request: Request) -> JSONResponse:
         )
         herramientas = tools_used(tool_payloads)
 
-        if not citas_ok:
+        # Las cifras se validan igual que los comment_id: contra los resultados
+        # reales. El modelo llegó a reportar "ILLENIUM (n=1869)" copiando el
+        # número del ejemplo del prompt, con ILLENIUM en 292. Una respuesta
+        # convincente y falsa es peor que una evasiva.
+        numeros_ok, numeros_inventados = validate_numeric_claims(
+            response_text, tool_payloads
+        )
+
+        if not citas_ok or not numeros_ok:
+            motivo = MENSAJE_DEGRADADO if not citas_ok else MENSAJE_NUMEROS
             logger.error(
-                "Respuesta degradada por citas sin evidencia: %s", citas_inventadas
+                "Respuesta degradada — citas inventadas: %s | cifras sin respaldo: %s",
+                citas_inventadas, numeros_inventados,
             )
             save_message(db, user_id, session_id, "user", query)
             save_message(
-                db, user_id, session_id, "assistant", MENSAJE_DEGRADADO,
+                db, user_id, session_id, "assistant", motivo,
                 tools_used=herramientas, citations=[],
             )
             record_query(db, user_id, query, {}, "es")
             return JSONResponse(content={
-                "response": MENSAJE_DEGRADADO,
+                "response": motivo,
                 "citations": [],
                 "quota_remaining": remaining,
                 "cached": False,

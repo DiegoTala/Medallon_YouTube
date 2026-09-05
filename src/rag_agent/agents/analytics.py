@@ -45,7 +45,12 @@ CÓMO TRATAR LOS PARÁMETROS QUE FALTAN — esto es importante:
    preguntes, hazlo en lenguaje natural y ofrece opciones concretas; nunca pidas
    un formato de fecha.
 
-Para trend_detection, SIEMPRE incluye el evidence_level en tu respuesta.
+SOBRE trend_detection: se ejecuta SOLO si el usuario pidió explícitamente una
+comparación entre dos periodos ("¿cambió...?", "agosto contra julio", "¿va
+subiendo?"). Si preguntó por el sentimiento de uno o varios canales SIN mencionar
+periodos que comparar, NO la llames — es una consulta a BigQuery y a Vertex AI
+que nadie pidió, y agrega a la respuesta una tendencia que el usuario no buscaba.
+Cuando sí la llames, SIEMPRE incluye el evidence_level.
 Devuelve los resultados estructurados tal como los recibes: no los interpretes,
 eso lo hace el agente de síntesis.
 """

@@ -169,3 +169,96 @@ def test_campos_faltantes_quedan_como_cadena_vacia():
 
 def test_evidence_index_ignora_resultados_fallidos():
     assert evidence_index([("semantic_search", {"status": "error"})]) == {}
+
+
+# ── validación numérica ──────────────────────────────────────────────────
+
+def _analytics(sample_sizes, rows=None):
+    return [("sentiment_analytics", {
+        "status": "success",
+        "sample_sizes": sample_sizes,
+        "results": rows or [],
+    })]
+
+
+def test_atrapa_el_caso_real_del_ejemplo_filtrado():
+    """El modelo reportó "ILLENIUM (n=1869)" con ILLENIUM en 292: copió el
+    número del ejemplo que traía el prompt de síntesis."""
+    from rag_agent.middleware.citations import validate_numeric_claims
+
+    ok, inventados = validate_numeric_claims(
+        "ILLENIUM (n=1869) y Alesso (n=6)",
+        _analytics({"ILLENIUM": 292, "Alesso": 90}),
+    )
+    assert ok is False
+    assert inventados == [6, 1869]
+
+
+def test_las_cifras_correctas_pasan():
+    from rag_agent.middleware.citations import validate_numeric_claims
+
+    ok, inventados = validate_numeric_claims(
+        "ILLENIUM (n=292) y Alesso (n=90)",
+        _analytics({"ILLENIUM": 292, "Alesso": 90}),
+    )
+    assert ok is True
+    assert inventados == []
+
+
+def test_una_respuesta_sin_cifras_es_valida():
+    """No toda respuesta es numérica; exigir citas donde no aplican sería
+    degradar respuestas correctas."""
+    from rag_agent.middleware.citations import validate_numeric_claims
+
+    ok, _ = validate_numeric_claims(
+        "No hay comentarios en los datos disponibles que hablen de eso.",
+        _analytics({}),
+    )
+    assert ok is True
+
+
+def test_acepta_el_n_de_las_filas_no_solo_de_sample_sizes():
+    from rag_agent.middleware.citations import validate_numeric_claims
+
+    payload = _analytics({"total": 250}, rows=[{"sentiment_label": "POSITIVO", "n": 200}])
+    ok, _ = validate_numeric_claims("Positivos (n=200) sobre (n=250)", payload)
+    assert ok is True
+
+
+def test_acepta_los_periodos_de_trend_detection():
+    from rag_agent.middleware.citations import validate_numeric_claims
+
+    payload = [("trend_detection", {"status": "success", "n_current": 45, "n_baseline": 12})]
+    ok, _ = validate_numeric_claims("agosto (n=45) contra julio (n=12)", payload)
+    assert ok is True
+
+
+def test_tolera_el_separador_de_miles():
+    """'1,869' y '1.869' son el mismo número escrito por locales distintos."""
+    from rag_agent.middleware.citations import validate_numeric_claims
+
+    payload = _analytics({"Martin Garrix": 1872})
+    assert validate_numeric_claims("Martin Garrix (n=1,872)", payload)[0] is True
+    assert validate_numeric_claims("Martin Garrix (n=1.872)", payload)[0] is True
+
+
+def test_no_valida_cifras_que_no_son_citas():
+    """Deliberadamente estrecho: solo el `n=` del formato exigido. Validar
+    porcentajes redondeados o fechas daría falsas alarmas y acabaría
+    degradando respuestas correctas — que es como un control termina apagado."""
+    from rag_agent.middleware.citations import validate_numeric_claims
+
+    ok, _ = validate_numeric_claims(
+        "El 84.4% es positivo, entre el 2026-07-27 y el 2026-09-05. (n=90)",
+        _analytics({"Alesso": 90}),
+    )
+    assert ok is True
+
+
+def test_las_herramientas_fallidas_no_aportan_cifras_validas():
+    from rag_agent.middleware.citations import validate_numeric_claims
+
+    fallida = [("sentiment_analytics", {"status": "error", "sample_sizes": {"x": 999}})]
+    ok, inventados = validate_numeric_claims("resultado (n=999)", fallida)
+    assert ok is False
+    assert inventados == [999]

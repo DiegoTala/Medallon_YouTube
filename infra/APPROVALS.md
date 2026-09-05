@@ -469,3 +469,74 @@ El tope de 3.000 tokens del PRD §12 existía **solo como frase en el prompt** �
 **Tests:** 180 pasan (eran 139).
 
 **Pendientes conocidos:** (1) el historial reusa siempre la misma sesión (`get_recent_sessions(..., limit=1)`), así que conversaciones de temas distintos se contaminan; (2) escritura de preferencias con confirmación; (3) F.2, la evaluación de 25 preguntas, sigue en espera.
+
+## 2026-09-05T16:05:00-06:00 — rag-deploy-service — fase2-calidad-de-respuestas
+
+- **Recurso(s):** `google_cloud_run_v2_service.rag_chat` (solo el tag de imagen: `97f48bb` → `5b43a82`).
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=5b43a82` (build `4ee1a507`, 50s, digest `sha256:8314b302ab6bb7b548f100f1fec0036506f22173ef41b68affaa2695bf001f56`, ejecutado por Diego), luego `terraform -chdir=infra/fase2 apply tfplan_calidad`.
+- **Costo estimado incremental:** **−$0.00 a −$0.10 USD/mes.** Es el primer cambio del proyecto que *reduce* consumo: el filtro de relevancia y el no-cachear-evidencia-débil no agregan consultas, y el umbral evita que el modelo redacte respuestas largas sobre resultados que no venían al caso.
+- **Costo total estimado tras el cambio:** ~$3.19 – $6.69 / $20.00 USD (sin cambio material)
+- **Margen restante:** ~$13.31 (67% libre). Delta acumulado Fase 2: $1.34 – $4.84 / $5.00.
+- **¿Contiene datos / requirió backup?:** No — `0 added, 1 changed, 0 destroyed`.
+- **Aprobado por:** Diego (verbatim: "Adelante con eso" para el fix de síntesis, "Se pueden las 3?" para las mejoras de calidad, y "Listo el commit, procede con el deploy" para ejecutar)
+- **Ejecutado:** sí — `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Revisión `rag-chat-service-00010-s9k`, `Ready: True`, arranque sin warnings.
+
+### El bug de fondo: la síntesis nunca recibió los datos
+
+Reportado por Diego con capturas: respuestas sin una sola cita, con el nombre de los agentes visible ("El search_agent encontró…", "(informe del search_agent)") y con la plantilla de formato emitida literalmente ("(canal, periodo actual vs base, evidence_level)").
+
+**Evidencia:** las 20 respuestas guardadas en `response_cache` tenían `citations: []`. Ninguna excepción.
+
+**Causa raíz única.** `SYNTHESIS_INSTRUCTION` nombraba `search_result` y `analytics_result` como palabras sueltas, sin las llaves que ADK necesita para sustituir variables de estado. La síntesis nunca vio una fila: redactaba a partir de la prosa que le pasaba el router. Los tres síntomas salen de ahí — un modelo al que se le pide citar sin darle qué citar hace lo mejor que puede: parafrasea el reporte que sí recibió (de ahí los nombres de agentes) y copia el molde de la cita porque no tiene valores que poner.
+
+Corregido con `{search_result?}` y `{analytics_result?}`. El sufijo `?` las hace opcionales, que es el caso normal: casi siempre corrió solo uno de los dos agentes.
+
+**Trampa relacionada, encontrada y cerrada en el mismo cambio:** `LlmAgent.canonical_instruction` devuelve `bypass_state_injection=True` cuando la instrucción es un callable. El helper `with_context` introducido horas antes (para inyectar la fecha) convertía instrucciones en callables y por tanto **desactivaba la sustitución de llaves**. No rompía nada todavía porque esos prompts no usaban variables, pero habría hecho fallar este mismo arreglo en silencio. Ahora llama a `inject_session_state` explícitamente.
+
+También se prohibió nombrar agentes en la respuesta, y el ejemplo de cita del prompt pasó de marcadores a valores reales.
+
+### Umbral de relevancia en semantic_search
+
+`VECTOR_SEARCH` **siempre** devuelve `top_k` filas, tengan o no que ver. Con 3,261 comentarios eso era la principal fuente de malas respuestas: preguntar por un DJ ausente devolvía cinco comentarios de otro y el modelo tenía que rescatar una recuperación mala.
+
+Calibrado con seis consultas reales contra el corpus:
+
+| Consulta | Naturaleza | Distancias |
+| :--- | :--- | ---: |
+| "el mejor set en vivo" | en corpus | 0.178 – 0.307 |
+| "drops de Martin Garrix" | en corpus | 0.224 – 0.280 |
+| "los sets de Tiesto" | DJ ausente | 0.379 – 0.411 |
+| "recetas de cocina italiana" | fuera de dominio | 0.422 – 0.553 |
+| "drops de Fisher" | DJ ausente | 0.496 – 0.526 |
+| "cómo declarar impuestos" | fuera de dominio | 0.509 – 0.575 |
+
+Hueco limpio entre 0.31 y 0.38; corte en **0.35** (`SEARCH_MAX_DISTANCE`, configurable). Verificado post-deploy: "drops de Martin Garrix" → 5 resultados, 0 descartados; "drops de Fisher" → 0 resultados, 5 descartados; "recetas de cocina" → 0 y 5.
+
+Es una calibración con seis consultas, no una validación: por eso es configurable y registra en el log cuando descarta todo. **Las distancias no son comparables entre modelos de embedding** — si el corpus se regenera con otro modelo, recalibrar.
+
+La herramienta devuelve además `descartados_por_relevancia`, para que la síntesis distinga "no hay comentarios" de "hay comentarios pero ninguno habla de eso".
+
+### `evidence_level` en sentiment_analytics
+
+La escala vivía solo en `trend_detection`. Se movió a `rag_agent/tools/evidence.py` y ahora la usan ambas, con los mismos umbrales (`< 30` insufficient, `< 100` weak) para que no puedan divergir.
+
+**La marca la muestra más pequeña, no el total** — una comparación vale lo que vale su lado flaco. Verificado contra datos reales: `['Martin Garrix', 'Zedd']` → `insufficient` con `{'Martin Garrix': 1872, 'Zedd': 6}`, aunque un lado tenga 1,872 comentarios. `['ILLENIUM', 'Alesso']` → `weak`. Toda salida lleva `sample_sizes`.
+
+### No se cachea lo que la evidencia no sostiene
+
+`es_cacheable()` rechaza `insufficient`, `weak` y los errores de herramienta. La versión del corpus no cubría esto: invalida cuando los datos cambian, pero el punto es que una conclusión de seis comentarios era frágil desde el principio, y congelarla siete días la vuelve la respuesta permanente. Con un corpus que crece cada semana, es la diferencia entre un caché que ahorra dinero y uno que fija un error.
+
+### Aviso de cobertura en la bienvenida
+
+Pedido por Diego. `/welcome` devuelve `aviso_cobertura`, generado del corpus: volumen, ventana temporal, canales con material abundante y canales con poco. El corte entre "bastante" y "poco" es **el mismo `WEAK_BELOW`** que usan las herramientas, para que la bienvenida y las advertencias de las respuestas nunca se contradigan.
+
+Verificado en vivo tras el deploy — y con una confirmación útil de que se lee del corpus y no está escrito a mano: reportó **3,278** comentarios, no los 3,261 medidos horas antes. El pipeline corrió en el intervalo y el aviso se enteró solo.
+
+### Versión del prompt
+
+`PROMPT_VERSION` a `2026-09-05.4`. Cambiaron síntesis y search_agent.
+
+**Tests:** 207 pasan (eran 180). Nuevos: `test_rag_synthesis.py` (verifica que el prompt contenga las llaves — la clase de error que un test de "el pipeline se construye" no ve) y `test_rag_evidence.py`.
+
+**Pendientes:** (1) el historial reusa siempre la misma sesión; (2) escritura de preferencias con confirmación; (3) F.2, la evaluación de 25 preguntas.

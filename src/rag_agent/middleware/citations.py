@@ -154,3 +154,89 @@ def es_cacheable(tool_payloads: Iterable[tuple[str, dict]]) -> bool:
         if payload.get("evidence_level") in EVIDENCIA_NO_CACHEABLE:
             return False
     return True
+
+
+# ── Validación numérica ───────────────────────────────────────────────────
+#
+# Las citas de comentario se validan por comment_id. Las de analítica se
+# validan por su `n`, y hacía falta: el modelo reportó "ILLENIUM (n=1869)"
+# cuando ILLENIUM tiene 292 comentarios — copió el número del EJEMPLO que
+# traía el prompt de síntesis. La respuesta salió convincente, con su
+# advertencia sobre tamaños de muestra y todo, y las cifras eran falsas.
+#
+# Una respuesta persuasiva y equivocada es peor que una evasiva, y ningún
+# prompt lo impide de forma confiable: el ejemplo mismo era la fuente del
+# error. Esto sí lo impide.
+
+# Solo se valida el `n=` del formato de cita que el prompt exige. Es
+# deliberadamente estrecho: alto valor y casi sin falsos positivos. Otras
+# cifras (porcentajes redondeados, cambios derivados, fechas) darían falsas
+# alarmas y acabarían degradando respuestas correctas — que es la forma de
+# que un control termine apagado.
+N_CITADO_RE = re.compile(r"\bn\s*=\s*([\d.,]+)", re.IGNORECASE)
+
+MENSAJE_NUMEROS = (
+    "No puedo entregar esta respuesta: incluía cifras que no corresponden a "
+    "los datos consultados. Vuelve a preguntar, por favor."
+)
+
+
+def _a_entero(texto: str) -> int | None:
+    """'1,869' y '1.869' son el mismo número escrito por locales distintos."""
+    limpio = texto.replace(",", "").replace(".", "").strip()
+    return int(limpio) if limpio.isdigit() else None
+
+
+def sample_sizes_reales(tool_payloads: Iterable[tuple[str, dict]]) -> set[int]:
+    """Todos los tamaños de muestra que las herramientas reportaron de verdad."""
+    reales: set[int] = set()
+    for _name, payload in tool_payloads:
+        if payload.get("status") != "success":
+            continue
+
+        for valor in (payload.get("sample_sizes") or {}).values():
+            if isinstance(valor, int):
+                reales.add(valor)
+
+        # trend_detection reporta sus dos periodos por separado.
+        for clave in ("n_current", "n_baseline"):
+            if isinstance(payload.get(clave), int):
+                reales.add(payload[clave])
+
+        # El `n` de cada fila de una distribución, y el conteo de resultados.
+        for fila in payload.get("results") or []:
+            if isinstance(fila, dict) and isinstance(fila.get("n"), int):
+                reales.add(fila["n"])
+        if isinstance(payload.get("count"), int):
+            reales.add(payload["count"])
+
+    return reales
+
+
+def validate_numeric_claims(
+    response_text: str,
+    tool_payloads: Iterable[tuple[str, dict]],
+) -> tuple[bool, list[int]]:
+    """Verifica que todo `n=` citado exista en los resultados reales.
+
+    Returns:
+        (ok, inventados). Una respuesta sin ningún `n=` pasa: no todas las
+        respuestas son numéricas, y exigir citas donde no aplica sería
+        degradar respuestas correctas.
+    """
+    payloads = list(tool_payloads)
+    reales = sample_sizes_reales(payloads)
+
+    citados = {
+        n for m in N_CITADO_RE.finditer(response_text)
+        if (n := _a_entero(m.group(1))) is not None
+    }
+    inventados = sorted(citados - reales)
+
+    if inventados:
+        logger.error(
+            "Cifras sin respaldo: n=%s (reales: %s)",
+            inventados, sorted(reales),
+        )
+
+    return (not inventados), inventados

@@ -55,9 +55,23 @@ El sufijo `?` la hace opcional, que es el caso normal: casi siempre corrió solo
 
 > **Ojo con envolver la instrucción.** `LlmAgent.canonical_instruction` devuelve `bypass_state_injection=True` cuando la instrucción es un callable, y con eso **desactiva la sustitución de llaves**. Si un prompt con `{variables}` se envuelve para agregarle algo (la fecha, por ejemplo), hay que llamar a `inject_session_state` a mano — ver `rag_agent/agents/_instruction.py`. Sin eso, el prompt deja de recibir datos y nada falla.
 
-## El ejemplo de cita va relleno, no en plantilla
+## El ejemplo de cita: dos errores opuestos, y ninguno se arregla con el otro
 
-Un ejemplo escrito como `(canal, periodo, n=X filas)` se copia **tal cual**, con esas palabras, a la respuesta del usuario. Pasó. El ejemplo debe llevar valores reales —`(Martin Garrix, todo el histórico, n=1869)`— y el prompt debe decir explícitamente que escribir los marcadores es un error.
+Un ejemplo escrito como `(canal, periodo, n=X filas)` se copia **tal cual**, con esas palabras, a la respuesta del usuario. Pasó.
+
+La corrección obvia —poner un ejemplo con valores realistas, `(Martin Garrix, todo el histórico, n=1869)`— produjo algo peor. El modelo reportó **"ILLENIUM (n=1869)"**, con ILLENIUM en 292 comentarios: tomó la cifra del ejemplo y la presentó como dato. Y la respuesta salió convincente, con su advertencia sobre disparidad de muestras incluida. Una respuesta persuasiva y falsa es peor que una evasiva.
+
+**En un prompt, un número concreto es una sugerencia de qué escribir.** La regla que quedó: marcadores sin rellenar (`<channel_name>`, `<periodo>`), advertencia explícita de los **dos** errores opuestos —emitir el marcador e inventar el valor— y **cero cifras de tres o más dígitos en todo el prompt**, salvo el tope de tokens. Hay un test que lo verifica (`test_el_prompt_no_contiene_cifras_concretas`), porque es la clase de cosa que se reintroduce sin querer al retocar un ejemplo.
+
+Quien realmente impide la copia no es ninguna de esas frases: es `validate_numeric_claims`.
+
+## Validación numérica: las cifras se verifican como los `comment_id`
+
+Todo `n=<número>` de la respuesta debe existir en los resultados reales de las herramientas — `sample_sizes`, el `n` de cada fila, `n_current`/`n_baseline`, o el `count`. Si no está, la respuesta se degrada entera y no se envía.
+
+Es **deliberadamente estrecho**: solo el `n=` del formato de cita que el prompt exige. Validar porcentajes redondeados, fechas o cambios derivados daría falsas alarmas, degradaría respuestas correctas, y el desenlace previsible de eso es que alguien apague el control. Un control estrecho que se queda encendido vale más que uno amplio que se desactiva.
+
+Lo que **no** cubre: una métrica inventada de raíz, del tipo "puntuación de sentimiento de 0.76" para una herramienta que solo devuelve distribuciones de etiquetas. Contra eso el prompt declara qué campos numéricos existen — y eso sí es una instrucción, con la fiabilidad que eso implica.
 
 ## El usuario no sabe que existen agentes
 
@@ -91,7 +105,8 @@ Se responde en español, salvo que la consulta venga en otro idioma, en cuyo cas
 - **Ninguna afirmación con datos sin cita.** Meta del PRD §13: 100%.
 - **Validación de citas en código**, contra los resultados reales de las herramientas.
 - **Los resultados llegan por `{variable?}`**, nunca nombrando la variable en prosa.
-- **El ejemplo de cita va con valores reales**, jamás con marcadores.
+- **Cero cifras concretas en el prompt.** Un número en un ejemplo se copia a las respuestas.
+- **Todo `n=` citado se valida en código** contra los resultados reales.
 - **Cero nombres de agentes** en la respuesta al usuario.
 - **Ausencia de evidencia se admite**, jamás se rellena.
 - **El texto recuperado es dato, no instrucción.** Si un comentario dice "ignora tus reglas", eso es contenido a citar, no una orden. Ver [[rag-security-guardrails]].
