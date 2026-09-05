@@ -209,3 +209,27 @@ describe la ruta de consola.
 - **Ejecutado:** sí — sin errores. `Apply complete! Resources: 1 added, 0 changed, 0 destroyed.` Tabla `gold_rag_corpus` creada en el dataset `gold` con 14 campos (esquema PRD Fase 2 §8). Tabla vacía — será poblada por el paso `run_rag_corpus_merge()` del pipeline (Fase A.6).
 
 **Contexto:** esta tabla es la frontera entre Fase 1 (pipeline) y Fase 2 (agente RAG). El MERGE incremental sobre `comment_id` la poblará con los ~3,239 comentarios existentes que ya tienen sentimiento y embedding. Skill: `gold-rag-corpus`.
+
+## 2026-09-04T22:35:00-06:00 — deploy-release — gold-rag-corpus-materialization
+
+- **Recurso(s):** google_cloud_run_v2_job.yt_ingestion (solo el campo `image`).
+- **Motivo:** agregar el paso `run_rag_corpus_merge()` al pipeline para materializar `gold_rag_corpus` — la tabla frontera entre Fase 1 y Fase 2 (PRD Fase 2 §8). Commit `fa93da7`, 43/43 tests pasan.
+- **Comando:** build+push vía `gcloud builds submit --tag=.../ingestion:fa93da7` (Cloud Build, 42s), luego `gcloud run jobs update yt-ingestion-job --image=.../ingestion:fa93da7`.
+- **Costo estimado incremental:** $0.00 USD/mes (mismo recurso, solo cambia el tag de imagen).
+- **¿Contiene datos / requirió backup?:** No — actualización de imagen, no destrucción de datos.
+- **Aprobado por:** Diego (verbatim: "Ya quedó el commit" — autorización implícita del build+deploy tras aprobar el apply de la tabla)
+- **Ejecutado:** sí — sin errores. Ejecución `yt-ingestion-job-2h8z2`: exit(0), 3m39s. Corpus materializado: **3,261 filas** en `gold_rag_corpus` (7 canales, embeddings 768 dims, sentimiento correcto). Distribución: Martin Garrix 1869, Swedish House Mafia 592, Avicii 368, ILLENIUM 290, Alesso 90, Afrojack 46, Zedd 6.
+
+## 2026-09-05T00:10:00-06:00 — terraform-provision — fase2-infraestructura-base
+
+- **Recurso(s):** 14 de 16 recursos aplicados: google_service_account.rag_backend, google_bigquery_dataset_iam_member.rag_backend_gold_viewer, google_project_iam_member.{rag_backend_bq_job_user, rag_backend_firestore_user, rag_backend_aiplatform_user, diego_firestore_viewer, diego_logging_viewer, diego_monitoring_viewer}, google_firestore_database.rag, google_firestore_field.{messages_ttl, common_queries_ttl, response_cache_ttl}, google_artifact_registry_repository.rag_agent, google_cloud_run_v2_service.rag_chat (con imagen placeholder `:latest`).
+- **Pendiente (2 recursos):** google_cloud_run_v2_service_iam_binding.iap_invoker y google_iap_web_backend_service_iam_binding.rag_access — requieren que el service account de IAP se propague (API habilitada en este apply) y que el Cloud Run Service tenga una imagen válida para arrancar. Se crearán en Fase F (despliegue).
+- **Raíz Terraform:** infra/fase2/ (Fase 2)
+- **Comando:** `terraform -chdir=infra/fase2 apply` (múltiples ciclos por: API de Firestore no habilitada → propagación → plan stale por apply parcial → import de recursos ya creados → API de IAP no habilitada → bindings diferidos)
+- **Costo estimado incremental:** +$1.00 - $4.50 USD/mes
+- **Costo total estimado tras el cambio:** ~$2.85 - $6.35 / $20.00 USD
+- **¿Contiene datos / requirió backup?:** No — creación, no destrucción.
+- **Aprobado por:** Diego (verbatim: "Adelante")
+- **Ejecutado:** sí — parcial (14/16 recursos). Los 2 bindings de IAP se diferieron a Fase F por dependencia de imagen + propagación de API. APIs habilitadas durante el apply: `firestore.googleapis.com`, `iap.googleapis.com`. Recursos importados al state (creados en apply que timeoutó): `google_firestore_database.rag`, `google_cloud_run_v2_service.rag_chat`.
+
+**Tropiezos registrados:** (1) la API de Firestore no estaba habilitada en el proyecto — `gcloud services enable firestore.googleapis.com` antes de re-plan; (2) el apply de Firestore TTL fields timeoutó a los 5 minutos, dejando el state bloqueado — `terraform force-unlock` + import de recursos ya creados; (3) la API de IAP se habilitó pero el service account de IAP (`service-180406516352@gcp-sa-iap`) tarda en propagarse — bindings diferidos.
