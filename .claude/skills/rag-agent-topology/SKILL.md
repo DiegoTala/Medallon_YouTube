@@ -57,19 +57,28 @@ hybrid_pipeline = SequentialAgent(
 )
 ```
 
-Cada especialista escribe su resultado en el estado de sesión vía `output_key`, y la síntesis lo lee por nombre desde su `instruction`:
+Cada especialista escribe en el estado de sesión **el payload crudo de su
+herramienta**, no el texto final del modelo, y la síntesis lo lee por nombre
+desde su `instruction`. `output_key` guardaba la prosa del modelo, que resume y
+descarta campos que la síntesis necesita para citar (`comment_id`,
+`channel_name`) — de ahí salieron las citas con marcadores literales
+`[<comment_id> · ...]`. Ahora se escribe el resultado crudo vía
+`after_tool_callback` (ver [[rag-synthesis-citations]]):
 
 ```python
+def guardar_payload(tool, args, tool_context, tool_response):
+    tool_context.state["search_result"] = tool_response
+    return None  # no altera el resultado que ve el modelo
+
 search_agent = LlmAgent(name="search_agent", model=MODEL,
-                        tools=[semantic_search], output_key="search_result")
-analytics_agent = LlmAgent(name="analytics_agent", model=MODEL,
-                           tools=[sentiment_analytics, trend_detection],
-                           output_key="analytics_result")
+                        tools=[semantic_search],
+                        after_tool_callback=guardar_payload)
+# analytics_agent: lo mismo, acumulando por tool.name en "analytics_result"
 ```
 
-> **Nota (verificada 2026-09-04, [ParallelAgent en la doc de ADK](https://adk.dev/agents/workflow-agents/parallel-agents/)):** las ramas de un `ParallelAgent` **no comparten estado ni historial durante la ejecución**. Esto no es una limitación a sortear — es justamente lo que hace que Search y Analytics no puedan contaminarse entre sí, y que la síntesis reciba dos resultados independientes. No intentes coordinarlos durante la ejecución; el punto de encuentro es el `output_key` que leen después.
+> **Nota (verificada 2026-09-05, [ParallelAgent en la doc de ADK](https://adk.dev/agents/workflow-agents/parallel-agents/)):** las ramas de un `ParallelAgent` **no comparten estado ni historial durante la ejecución**. Esto no es una limitación a sortear — es justamente lo que hace que Search y Analytics no puedan contaminarse entre sí, y que la síntesis reciba dos resultados independientes. El `state_delta` de cada rama sí se consolida en el estado de sesión al final, igual que hacía `output_key`; el punto de encuentro sigue siendo la variable que la síntesis lee después.
 
-El `SequentialAgent` es lo que garantiza que la síntesis corra **después** de que ambas ramas terminaron. Sin él, la síntesis leería `output_key` vacíos.
+El `SequentialAgent` es lo que garantiza que la síntesis corra **después** de que ambas ramas terminaron. Sin él, la síntesis leería `search_result` y `analytics_result` vacíos.
 
 ## Herramientas como funciones Python
 

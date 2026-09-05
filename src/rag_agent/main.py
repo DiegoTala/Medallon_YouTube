@@ -37,6 +37,7 @@ from rag_agent.middleware.citations import (
     MENSAJE_NUMEROS,
     collect_tool_payloads,
     es_cacheable,
+    render_inline_citations,
     tools_used,
     validate_citations,
     validate_numeric_claims,
@@ -378,13 +379,19 @@ async def chat(request: Request) -> JSONResponse:
                 "degraded": True,
             })
 
+        # 8c. El formato de la cita lo arma el código, no el modelo. La síntesis
+        # escribe [comment_id]; aquí se expande al formato completo con la
+        # metadata REAL de la fila (título, canal, fecha, URL). Ver
+        # rag-synthesis-citations.
+        display_text = render_inline_citations(response_text, tool_payloads)
+
         # 9. Persistencia
         # Guardar mensaje del usuario
         save_message(db, user_id, session_id, "user", query)
 
         # Guardar respuesta del agente
         save_message(
-            db, user_id, session_id, "assistant", response_text,
+            db, user_id, session_id, "assistant", display_text,
             tools_used=herramientas, citations=citations,
         )
 
@@ -395,14 +402,14 @@ async def chat(request: Request) -> JSONResponse:
             store_response(
                 db, query, {}, "es",
                 corpus_version, PROMPT_VERSION, MODEL,
-                response_text, citations, user_id,
+                display_text, citations, user_id,
             )
 
         # Registrar consulta frecuente
         record_query(db, user_id, query, {}, "es")
 
         return JSONResponse(content={
-            "response": response_text,
+            "response": display_text,
             "citations": citations,
             "quota_remaining": remaining,
             "cached": False,

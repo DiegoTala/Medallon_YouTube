@@ -40,7 +40,12 @@ logger = logging.getLogger("rag_agent.versions")
 #   "n=1869" se filtró a una respuesta real), campos numéricos declarados,
 #   search_agent manda la pregunta completa en vez de keywords, y
 #   trend_detection solo corre bajo petición explícita.
-PROMPT_VERSION = "2026-09-05.5"
+# 2026-09-05.6 — citas visibles y correctas: search_result/analytics_result
+#   son los payloads CRUDOS de las herramientas (after_tool_callback), no el
+#   texto del modelo que perdía comment_id/channel_name; la síntesis cita solo
+#   [comment_id] y el código arma el formato completo con la metadata real.
+#   Invalida el caché: las respuestas viejas traían el molde literal.
+PROMPT_VERSION = "2026-09-05.6"
 
 # ── Versión del corpus ────────────────────────────────────────────────────
 #

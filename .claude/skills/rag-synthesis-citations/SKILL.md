@@ -33,13 +33,19 @@ Toda afirmación basada en datos lleva su fuente. El formato mínimo, derivado d
 [comment_id · "título del video" · canal · fecha · URL]
 ```
 
+**El modelo escribe SOLO `[comment_id]`; el formato completo lo arma el código.** La síntesis cita el ID real entre corchetes, y `render_inline_citations` (en `rag_agent/middleware/citations.py`) lo expande con la metadata de la fila real de la herramienta — nunca con lo que el modelo escribió. Estuvo al revés y el modelo emitía el molde literal `[<comment_id> · "..." · <channel_name> · fecha]` porque un paso intermedio (el texto del `output_key`) había descartado `comment_id` y `channel_name` de los datos que veía la síntesis.
+
 Para resultados de [[rag-tool-sentiment-analytics]] y [[rag-tool-trend-detection]], la cita es el conjunto consultado: canal, periodo y **el `n` de filas** sobre el que se calculó.
 
 **La validación de citas se hace en código, no en el prompt.** Antes de devolver la respuesta, el servicio verifica que todo `comment_id` citado exista en los resultados que las herramientas realmente devolvieron. Un `comment_id` citado que no está en el resultado es una alucinación, y la respuesta se rechaza o se degrada — no se envía. Pedirle al modelo que "cite correctamente" es una instrucción, no un control.
 
 ## La síntesis tiene que RECIBIR los datos, no que se los nombren
 
-Los especialistas escriben su salida en el estado de sesión vía `output_key`. Para que la síntesis la vea, su instrucción debe traer la **variable entre llaves**:
+Los especialistas escriben en el estado de sesión **el payload crudo de su
+herramienta** vía `after_tool_callback` (ver [[rag-agent-topology]]) — no el
+texto final del modelo: `output_key` guardaba la prosa del modelo, que resume y
+descartaba `comment_id`/`channel_name`. Para que la síntesis la vea, su
+instrucción debe traer la **variable entre llaves**:
 
 ```
 RESULTADOS DE BÚSQUEDA:
@@ -104,7 +110,8 @@ Se responde en español, salvo que la consulta venga en otro idioma, en cuyo cas
 - **Sin herramientas de datos, nunca.** `tools=[]` en `synthesis_agent`.
 - **Ninguna afirmación con datos sin cita.** Meta del PRD §13: 100%.
 - **Validación de citas en código**, contra los resultados reales de las herramientas.
-- **Los resultados llegan por `{variable?}`**, nunca nombrando la variable en prosa.
+- **El formato de la cita lo arma el código.** La síntesis escribe `[comment_id]`; `render_inline_citations` lo expande con la metadata real. El modelo elige QUÉ citar; de CÓMO se ve, se encarga el código.
+- **Los resultados llegan por `{variable?}`**, nunca nombrando la variable en prosa. Y son el payload crudo de la herramienta, no la prosa del modelo.
 - **Cero cifras concretas en el prompt.** Un número en un ejemplo se copia a las respuestas.
 - **Todo `n=` citado se valida en código** contra los resultados reales.
 - **Cero nombres de agentes** en la respuesta al usuario.

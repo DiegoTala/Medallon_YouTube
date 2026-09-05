@@ -3,14 +3,33 @@
 Ver .claude/skills/rag-agent-topology/SKILL.md.
 - Invocado por root_router_agent vía AgentTool
 - Tiene acceso a sentiment_analytics y trend_detection
-- output_key="analytics_result"
+- Escribe en `analytics_result` los payloads CRUDOS de las herramientas, no el
+  texto del modelo: un resumen pierde sample_sizes/evidence_level y la síntesis
+  no puede citar. Ver _guardar_payload_en_estado.
 """
 
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent
+from google.adk.tools import ToolContext
 
 from rag_agent.agents._instruction import with_context
+
+
+def _guardar_payload_en_estado(tool, args, tool_context: ToolContext, tool_response: dict):
+    """Acumula los payloads crudos de las herramientas en `analytics_result`.
+
+    En una misma pregunta pueden correr sentiment_analytics y trend_detection;
+    cada uno se guarda bajo su nombre para que ninguno pise al otro.
+
+    Returns None a propósito: no altera el resultado que ve el modelo.
+    """
+    acumulado = tool_context.state.get("analytics_result")
+    if not isinstance(acumulado, dict):
+        acumulado = {}
+    acumulado[tool.name] = tool_response
+    tool_context.state["analytics_result"] = acumulado
+    return None
 
 ANALYTICS_INSTRUCTION = """Eres un especialista en analítica de sentimiento y detección de tendencias de comentarios de YouTube sobre DJs y música electrónica.
 
@@ -71,6 +90,6 @@ def create_analytics_agent(
         ),
         instruction=with_context(ANALYTICS_INSTRUCTION, context_provider),
         tools=[sentiment_tool, trend_tool],
-        output_key="analytics_result",
+        after_tool_callback=_guardar_payload_en_estado,
         generate_content_config=config,
     )

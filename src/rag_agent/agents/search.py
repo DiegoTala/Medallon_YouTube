@@ -3,14 +3,31 @@
 Ver .claude/skills/rag-agent-topology/SKILL.md.
 - Invocado por root_router_agent vía AgentTool
 - Tiene acceso solo a semantic_search
-- output_key="search_result"
+- Escribe en `search_result` el payload CRUDO de la herramienta, no el texto
+  del modelo: un resumen pierde comment_id/channel_name y la síntesis no puede
+  citar. Ver _guardar_payload_en_estado.
 """
 
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent
+from google.adk.tools import ToolContext
 
 from rag_agent.agents._instruction import with_context
+
+
+def _guardar_payload_en_estado(tool, args, tool_context: ToolContext, tool_response: dict):
+    """Guarda el resultado crudo de semantic_search en `search_result`.
+
+    `output_key` guardaba el TEXTO final del modelo: Gemini resume y descarta
+    campos (comment_id, channel_name) que la síntesis necesita para citar. El
+    payload crudo es la evidencia exacta y no pierde nada — la síntesis recibe
+    siempre las filas tal como las devolvió BigQuery.
+
+    Returns None a propósito: no altera el resultado que ve el modelo.
+    """
+    tool_context.state["search_result"] = tool_response
+    return None
 
 SEARCH_INSTRUCTION = """Eres un especialista en búsqueda semántica de comentarios de YouTube sobre DJs y música electrónica.
 
@@ -60,6 +77,6 @@ def create_search_agent(
         ),
         instruction=with_context(SEARCH_INSTRUCTION, context_provider),
         tools=[search_tool],
-        output_key="search_result",
+        after_tool_callback=_guardar_payload_en_estado,
         generate_content_config=config,
     )

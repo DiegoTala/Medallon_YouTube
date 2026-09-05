@@ -10,6 +10,7 @@ from rag_agent.middleware.citations import (
     collect_tool_payloads,
     evidence_index,
     extract_cited_ids,
+    render_inline_citations,
     tools_used,
     valid_comment_ids,
     validate_citations,
@@ -52,12 +53,26 @@ def test_extrae_citas_en_el_formato_del_skill():
     assert extract_cited_ids(texto) == {REAL}
 
 
+def test_extrae_la_cita_simple_que_escribe_el_modelo():
+    """La síntesis cita solo [comment_id]; el formato completo lo arma el
+    código con la metadata real (render_inline_citations)."""
+    assert extract_cited_ids(f"[{REAL}]") == {REAL}
+
+
 def test_texto_sin_citas_no_extrae_nada():
     assert extract_cited_ids("No hay comentarios en los datos disponibles.") == set()
 
 
 def test_ignora_corchetes_que_no_son_citas():
     assert extract_cited_ids("Un rango [1-5] y una lista [a, b].") == set()
+
+
+def test_ignora_el_molde_literal_con_marcadores():
+    """`[<comment_id> · ...]` es el molde sin rellenar: no es un ID inventado
+    (no degrada) ni una cita extraíble (no produce citas). Con el payload crudo
+    en el estado, la síntesis tiene el ID real y no emite este molde."""
+    texto = '[<comment_id> · "THANK YOU CREAMFIELDS GB" · <channel_name> · 2026-08-29]'
+    assert extract_cited_ids(texto) == set()
 
 
 # ── evidencia real ───────────────────────────────────────────────────────
@@ -169,6 +184,35 @@ def test_campos_faltantes_quedan_como_cadena_vacia():
 
 def test_evidence_index_ignora_resultados_fallidos():
     assert evidence_index([("semantic_search", {"status": "error"})]) == {}
+
+
+# ── render del formato de cita (lo que ve el usuario en el texto) ──────────
+
+def test_render_expande_el_id_al_formato_completo_con_metadata_real():
+    """El modelo escribe [comment_id]; el código arma la cita con la fila real
+    de la herramienta — nunca con lo que el modelo escribió."""
+    texto = f'Les encantó: "🔥🎧🎵" [{REAL}].'
+    renderizado = render_inline_citations(texto, _payload(REAL))
+    assert (
+        f'[{REAL} · "Tomorrowland 2024" · Martin Garrix · 2024-07-21'
+        ' · https://youtu.be/abc123]'
+    ) in renderizado
+
+
+def test_render_deja_intacta_una_cita_ya_completa():
+    """Si el modelo ya escribió la cita completa con el ID real, no se toca."""
+    texto = f'[{REAL} · "Tomorrowland 2024" · Martin Garrix · 2024-07-21]'
+    assert render_inline_citations(texto, _payload(REAL)) == texto
+
+
+def test_render_no_toca_ids_que_no_estan_en_la_evidencia():
+    """validate_citations degrada antes de llegar aquí; por seguridad el
+    renderer no fabrica metadata para IDs que no conoce."""
+    assert render_inline_citations(f"[{INVENTADO}]", _payload(REAL)) == f"[{INVENTADO}]"
+
+
+def test_render_sin_evidencia_devuelve_el_texto():
+    assert render_inline_citations("sin citas", []) == "sin citas"
 
 
 # ── validación numérica ──────────────────────────────────────────────────

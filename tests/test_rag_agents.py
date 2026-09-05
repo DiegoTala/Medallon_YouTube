@@ -13,19 +13,71 @@ from rag_agent.tools.adk_tools import (
 )
 
 
-def test_search_agent_has_output_key():
+def test_search_agent_escribe_el_payload_crudo_en_el_estado():
+    """`search_result` lo escribe el callback con el payload crudo de la
+    herramienta, no el texto final del modelo (que perdía comment_id y
+    channel_name — por eso las citas salían con marcadores literales)."""
     tool = MagicMock()
     agent = create_search_agent(tool)
     assert agent.name == "search_agent"
-    assert agent.output_key == "search_result"
+    assert agent.output_key is None
+    assert callable(agent.after_tool_callback)
 
 
-def test_analytics_agent_has_output_key():
+def test_analytics_agent_escribe_los_payloads_crudos_en_el_estado():
     sentiment = MagicMock()
     trend = MagicMock()
     agent = create_analytics_agent(sentiment, trend)
     assert agent.name == "analytics_agent"
-    assert agent.output_key == "analytics_result"
+    assert agent.output_key is None
+    assert callable(agent.after_tool_callback)
+
+
+class _Estado:
+    def __init__(self):
+        self._d = {}
+
+    def get(self, key, default=None):
+        return self._d.get(key, default)
+
+    def __getitem__(self, key):
+        return self._d[key]
+
+    def __setitem__(self, key, value):
+        self._d[key] = value
+
+
+class _ToolCtx:
+    def __init__(self):
+        self.state = _Estado()
+
+
+def test_el_callback_de_search_escribe_el_payload_crudo():
+    """El estado guarda el dict crudo de la herramienta, no una reescritura."""
+    from rag_agent.agents.search import _guardar_payload_en_estado as guardar_search
+
+    ctx = _ToolCtx()
+    payload = {"status": "success", "results": [{"comment_id": "UgxKREWxIgDrf8Ug4AEC"}]}
+    assert guardar_search(None, {}, ctx, payload) is None
+    assert ctx.state["search_result"] is payload
+
+
+def test_el_callback_de_analytics_acumula_por_tool():
+    """Si corren las dos herramientas en una pregunta, ninguna pisa a la otra."""
+    from rag_agent.agents.analytics import _guardar_payload_en_estado as guardar_analytics
+
+    ctx = _ToolCtx()
+    sent = MagicMock(name="sentiment_analytics")
+    sent.name = "sentiment_analytics"
+    trend = MagicMock(name="trend_detection")
+    trend.name = "trend_detection"
+
+    guardar_analytics(sent, {}, ctx, {"status": "success", "sample_sizes": {"total": 5}})
+    guardar_analytics(trend, {}, ctx, {"status": "success", "n_current": 3})
+    assert ctx.state["analytics_result"] == {
+        "sentiment_analytics": {"status": "success", "sample_sizes": {"total": 5}},
+        "trend_detection": {"status": "success", "n_current": 3},
+    }
 
 
 def test_synthesis_agent_has_no_tools():

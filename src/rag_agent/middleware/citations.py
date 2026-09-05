@@ -17,11 +17,18 @@ from typing import Any, Iterable
 
 logger = logging.getLogger("rag_agent.citations")
 
-# Formato de cita de rag-synthesis-citations:
+# Formato de cita de rag-synthesis-citations (el que ve el usuario):
 #   [comment_id · "título del video" · canal · fecha · URL]
+# El modelo escribe SOLO [comment_id] (ver CITACION_ID_RE) y el código arma el
+# formato completo con la metadata real — de CÓMO se ve una cita se encarga el
+# código, no el modelo. Por eso el regex también acepta `]` como terminador:
+# [comment_id] es una cita válida de extraer.
 # Los comment_id de YouTube son opacos (base64 URL-safe, típicamente >20 chars).
 # El separador puede venir como '·' o, si el modelo lo degrada, como '|' o '-'.
-CITATION_RE = re.compile(r"\[\s*([A-Za-z0-9_.\-]{8,})\s*(?:·|\||—|–)")
+CITATION_RE = re.compile(r"\[\s*([A-Za-z0-9_.\-]{8,})\s*(?:·|\||—|–|\])")
+
+# Forma EXACTA que el modelo debe emitir para citar un comentario: solo el ID.
+CITACION_ID_RE = re.compile(r"\[\s*([A-Za-z0-9_.\-]{8,})\s*\]")
 
 MENSAJE_DEGRADADO = (
     "No puedo entregar esta respuesta: incluía citas que no corresponden a "
@@ -91,6 +98,35 @@ def valid_comment_ids(tool_payloads: Iterable[tuple[str, dict]]) -> set[str]:
 def extract_cited_ids(response_text: str) -> set[str]:
     """Extrae los identificadores citados en el texto de la respuesta."""
     return {m.group(1) for m in CITATION_RE.finditer(response_text)}
+
+
+def render_inline_citations(
+    response_text: str, tool_payloads: Iterable[tuple[str, dict]]
+) -> str:
+    """Expande las citas [comment_id] al formato completo con la metadata real.
+
+    El modelo elige QUÉ citar; de CÓMO se ve esa cita se encarga el código: se
+    arma con la fila real de la herramienta (título, canal, fecha, URL), nunca
+    con lo que el modelo escribió. Si el modelo ya escribió la cita completa
+    ([id · ...]), se deja intacta. Un ID que no exista en la evidencia se deja
+    como está — validate_citations lo habría degradado antes de llegar aquí.
+    """
+    index = evidence_index(tool_payloads)
+    if not index:
+        return response_text
+
+    def reemplaza(match: re.Match) -> str:
+        cid = match.group(1)
+        fila = index.get(cid)
+        if fila is None:
+            return match.group(0)
+        fecha = str(fila.get("comment_published_at") or "")[:10]
+        titulo = fila.get("video_title") or ""
+        canal = fila.get("channel_name") or ""
+        url = fila.get("video_url") or ""
+        return f'[{cid} · "{titulo}" · {canal} · {fecha} · {url}]'
+
+    return CITACION_ID_RE.sub(reemplaza, response_text)
 
 
 def validate_citations(

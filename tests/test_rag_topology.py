@@ -87,10 +87,17 @@ def test_el_memory_agent_no_toca_bigquery():
     ]
 
 
-def test_los_output_key_son_los_que_lee_la_sintesis():
+def test_los_datos_llegan_a_la_sintesis_por_payload_crudo():
+    """Search y analytics escriben el payload crudo de la herramienta vía
+    after_tool_callback (el texto del modelo perdía campos y la síntesis no
+    podía citar). memory_agent conserva output_key: su salida es texto."""
     root = _pipeline()
-    assert _tool(root, "search_agent").agent.output_key == "search_result"
-    assert _tool(root, "analytics_agent").agent.output_key == "analytics_result"
+    search = _tool(root, "search_agent").agent
+    analytics = _tool(root, "analytics_agent").agent
+    assert search.output_key is None
+    assert callable(search.after_tool_callback)
+    assert analytics.output_key is None
+    assert callable(analytics.after_tool_callback)
     assert _tool(root, "memory_agent").agent.output_key == "memory_result"
 
 
