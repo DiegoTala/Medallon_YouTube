@@ -598,3 +598,71 @@ Verificado post-deploy: la respuesta a "¿Qué opinan de los drops de Martin Gar
 `validate_citations` no lo atrapa **por diseño**: valida que ninguna cita sea inventada, no que existan citas. Una respuesta sin citas es legítima cuando no hay datos, y bloquear por ausencia degradaría esas.
 
 El invariante 11 de CLAUDE.md ("ninguna respuesta con datos sin cita") **todavía no se cumple**. La regla candidata, bien acotada: si `semantic_search` devolvió filas y la respuesta no cita ningún `comment_id`, es una violación. Requiere medirse antes de activarse, porque degradar de más es la forma en que un control termina apagado.
+
+## 2026-09-05T17:40:00-06:00 — rag-deploy-service — citas: payload crudo en estado
+
+- **Recurso(s):** `google_cloud_run_v2_service.rag_chat` (solo el tag de imagen: `655492d` → `14dfff0`).
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=14dfff0` (build `80a1c680-cd3c-4286-862e-096c831af2b4`, 42s, digest `sha256:8231124a06e5ec5bddacb3e0ad59dd30c42731ab899f22d7ba0fba77d5051c10`), luego `terraform -chdir=infra/fase2 apply tfplan_citas`.
+- **Costo estimado incremental:** $0.00 USD/mes.
+- **Costo total estimado tras el cambio:** ~$3.19 – $6.69 / $20.00 USD
+- **¿Contiene datos / requirió backup?:** No — `0 added, 1 changed, 0 destroyed`.
+- **Aprobado por:** Diego (verbatim: "Autorizo el deploy")
+- **Ejecutado:** sí — `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Revisión `rag-chat-service-00012-bb8`, `Ready: True`.
+
+### Qué entró y qué se midió
+
+`search_agent`/`analytics_agent` ahora escriben en el estado de sesión el **payload crudo** de la herramienta (vía `after_tool_callback`), en vez del texto final del modelo que perdía `comment_id`/`channel_name` — la causa de que la síntesis emitiera el molde literal `[<comment_id> · ...]`.
+
+**Medido post-deploy (revisión 00012):** la respuesta citó diez comentarios reales pero la instrucción abstracta "[id]" hizo que el modelo omitiera las citas por completo → se corrigió con la plantilla concreta en el prompt (deploy siguiente).
+
+## 2026-09-05T17:45:00-06:00 — rag-deploy-service — citas: plantilla concreta de cita
+
+- **Recurso(s):** `google_cloud_run_v2_service.rag_chat` (solo el tag de imagen: `14dfff0` → `d742b65`).
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=d742b65` (build `adad5bce-abb5-4e96-a3e2-cb0ee7a3f941`, 44s, digest `sha256:02ea24050ed882ea4804bea6619b6bfed0bd74bb4665bda859d9ffd3cdf676ae`), luego `terraform -chdir=infra/fase2 apply tfplan_citas2`.
+- **Costo estimado incremental:** $0.00 USD/mes.
+- **Costo total estimado tras el cambio:** ~$3.19 – $6.69 / $20.00 USD
+- **¿Contiene datos / requirió backup?:** No — `0 added, 1 changed, 0 destroyed`.
+- **Aprobado por:** Diego (verbatim: "Apruebo")
+- **Ejecutado:** sí — `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Revisión `rag-chat-service-00013-2dz`, `Ready: True`.
+
+### Qué entró y qué se midió
+
+La forma abstracta `[id]` hizo que la síntesis omitiera las citas. Se revierte a la plantilla concreta `[comment_id · "video_title" · channel_name · fecha]`, que sí elicita los corchetes — con el payload crudo ya presente.
+
+**Medido post-deploy (revisión 00013):** el modelo escribió `[<comment_id>: ID · ...]` con la etiqueta literal; el formato final seguía siendo del modelo → el renderer pasó a normalizar en código (deploy siguiente).
+
+## 2026-09-05T17:53:00-06:00 — rag-deploy-service — citas: normalización en código
+
+- **Recurso(s):** `google_cloud_run_v2_service.rag_chat` (solo el tag de imagen: `d742b65` → `3829ef6`).
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=3829ef6` (build `6fcb4b35-b4be-4541-ace9-b3946201eae0`, 46s, digest `sha256:40f6732c85ff577fd3d40d1c193deadffdd1682affa243adfb738840b6b7a0b3`), luego `terraform -chdir=infra/fase2 apply tfplan_citas3`.
+- **Costo estimado incremental:** $0.00 USD/mes.
+- **Costo total estimado tras el cambio:** ~$3.19 – $6.69 / $20.00 USD
+- **¿Contiene datos / requirió backup?:** No — `0 added, 1 changed, 0 destroyed`.
+- **Aprobado por:** Diego (verbatim: "Apruebo!")
+- **Ejecutado:** sí — `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Revisión `rag-chat-service-00014-qhf`, `Ready: True`.
+
+### Qué entró y qué se midió
+
+`render_inline_citations` normaliza **cualquier bloque `[...]`** que contenga un comment_id real de la evidencia (el modelo escribía `[<comment_id>: ID · ...]`); la validación corre sobre el texto normalizado.
+
+**Medido post-deploy (revisión 00014):** el modelo escribió `[<ID> · ...]` con ángulos alrededor del ID y la respuesta seguía sin normalizar → la evidencia de `tool_payloads` llegaba vacía: los eventos del runner raíz no traen los payloads de los sub-agentes (deploy siguiente).
+
+## 2026-09-05T18:02:00-06:00 — rag-deploy-service — citas: evidencia desde el estado de sesión
+
+- **Recurso(s):** `google_cloud_run_v2_service.rag_chat` (solo el tag de imagen: `3829ef6` → `b337d27`).
+- **Raíz Terraform:** `infra/fase2/` (Fase 2)
+- **Comando:** `gcloud builds submit --config=cloudbuild.rag.yaml --substitutions=_TAG=b337d27` (build `1ff37814-eb54-4759-af4d-3c684d477bc8`, 42s), luego `terraform -chdir=infra/fase2 apply tfplan_citas4`.
+- **Costo estimado incremental:** $0.00 USD/mes.
+- **Costo total estimado tras el cambio:** ~$3.19 – $6.69 / $20.00 USD
+- **¿Contiene datos / requirió backup?:** No — `0 added, 1 changed, 0 destroyed`.
+- **Aprobado por:** Diego (verbatim: "Aplicalo, ya no vuelvas a modificar automáticamente sin preguntar")
+- **Ejecutado:** sí — `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.` Revisión `rag-chat-service-00015-wxh`, `Ready: True`.
+
+### La causa raíz real de `citations: []`
+
+`AgentTool` corre cada sub-agente en su **propio Runner** y **no reenvía sus function_responses** al runner raíz (solo el texto final). `collect_tool_payloads` nunca vio los payloads de `semantic_search`/`sentiment_analytics` — el índice de evidencia estuvo vacío desde el inicio, por eso el panel "Fuentes" siempre quedó vacío. El `state_delta` de los sub-agentes SÍ se reenvía al estado del padre (agent_tool.py), así que la evidencia ahora se lee de `payloads_from_state()` sobre el estado de sesión tras el run.
+
+**Verificado post-deploy (revisión 00015):** "¿Qué opinan de los drops de Martin Garrix?" devuelve citas canónicas `[ID · "título" · canal · fecha · URL]` con metadata real y **10 citas** en el panel "Fuentes" (comment_id, channel_name, video_title, fecha). El primer request tras el deploy devolvió el mensaje de fallback (modelo sin texto en esa corrida); el retry con otra consulta confirmó el flujo completo.
